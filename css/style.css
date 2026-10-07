@@ -444,9 +444,19 @@ select:focus {
   justify-items: center;
 }
 
+.receipt-wrap {
+  display: grid;
+  gap: 10px;
+  width: min(340px, 100%);
+}
+
+.receipt-save {
+  min-height: 44px;
+}
+
 /* 감열지 영수증 모양 */
 .receipt {
-  width: min(340px, 100%);
+  width: 100%;
   padding: 22px 20px 26px;
   font-family: "BIZ UDGothic", "Osaka-Mono", "MS Gothic", ui-monospace, monospace;
   font-size: 13px;
@@ -459,20 +469,17 @@ select:focus {
   mask: radial-gradient(circle 6px at 50% 100%, transparent 98%, #000) 50% 100% / 14px 100% repeat-x;
 }
 
-.receipt__head {
-  margin-bottom: 10px;
-  text-align: center;
-}
-
 .receipt__store {
   margin: 0;
+  text-align: center;
   font-size: 12px;
   letter-spacing: 0.2em;
   color: #6b7280;
 }
 
 .receipt h3 {
-  margin: 2px 0 0;
+  margin: 2px 0 10px;
+  text-align: center;
   font-size: 17px;
   letter-spacing: 0.15em;
 }
@@ -505,22 +512,19 @@ select:focus {
   font-weight: 700;
 }
 
-.receipt__line--sub {
+.receipt__line--day {
   padding-left: 1em;
-  color: #6b7280;
 }
 
-.receipt__day {
+.receipt__line--sub {
   margin-bottom: 6px;
+  padding-left: 1em;
+  color: #6b7280;
 }
 
 .receipt__date {
   margin: 4px 0 0;
   font-weight: 700;
-}
-
-.receipt__day .receipt__line:not(.receipt__line--sub) {
-  padding-left: 1em;
 }
 
 .receipt__total {
@@ -761,6 +765,7 @@ select:focus {
   .actions,
   .pager,
   .receipt-controls,
+  .receipt-save,
   #view-entry,
   #view-settings,
   #summary,
@@ -779,17 +784,20 @@ select:focus {
     display: block;
   }
 
-  .receipt {
+  .receipt-wrap {
     margin: 0 auto;
-    box-shadow: none;
-    border: 1px solid #d1d5db;
-    -webkit-mask: none;
-    mask: none;
     break-inside: avoid;
     break-after: page;
   }
 
-  .receipt:last-child {
+  .receipt-wrap:last-child {
     break-after: auto;
+  }
+
+  .receipt {
+    box-shadow: none;
+    border: 1px solid #d1d5db;
+    -webkit-mask: none;
+    mask: none;
   }
 }

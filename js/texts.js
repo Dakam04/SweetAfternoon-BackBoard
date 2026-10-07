@@ -73,6 +73,10 @@ window.BACK_TEXTS = {
   receiptIssued: (text) => `発行 ${text}`,
   receiptEmpty: 'この期間の記録はありません。',
   openReceipt: (name) => `${name}の明細を見る`,
+  saveReceipt: '画像で保存',
+  receiptImageSaved: '明細を画像で保存しました。',
+  receiptImageFailed: '画像を作成できませんでした。',
+  receiptImageFile: (name, from, to) => `明細_${name}_${from.replaceAll('-', '')}-${to.replaceAll('-', '')}.png`,
 
   // ---------- 설정 ----------
   castsTitle: '基本メンバー',

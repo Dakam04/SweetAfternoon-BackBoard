@@ -590,48 +590,205 @@ function renderSummary() {
     : shown.map(receiptHtml).join('');
 }
 
-function receiptLine(label, value, className = '') {
-  return `<div class="receipt__line ${className}"><span>${escapeHtml(label)}</span><span>${escapeHtml(value)}</span></div>`;
-}
-
 // 금액을 직접 넣은 품목은 개수 없이 이름만
 function lineLabel(itemId, count) {
   return count ? `${itemName(itemId)} ×${count}` : itemName(itemId);
 }
 
-function receiptHtml(report) {
+// 명세의 줄 목록. 화면(HTML)과 이미지(canvas)가 같은 내용을 그린다.
+//   type: store / title / line / sub / cast / hr / heading / date / total / issued
+function receiptRows(report) {
   const number = (amount) => amount.toLocaleString('ja-JP');
   const now = new Date();
   const issued = `${fullDate(toKey(now))} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  const days = report.days
-    .map((day) => `<div class="receipt__day">
-      <p class="receipt__date">${escapeHtml(shortDate(day.key))}</p>
-      ${day.lines.map(([itemId, entry]) => receiptLine(lineLabel(itemId, entry.n), number(entryAmount(entry)))).join('')}
-      ${receiptLine(TEXTS.receiptSubtotal, number(day.subtotal), 'receipt__line--sub')}
-    </div>`)
-    .join('');
-  const items = orderedEntries(Object.fromEntries(report.items))
-    .map(([itemId, sum]) => receiptLine(lineLabel(itemId, sum.n), number(sum.amount)))
-    .join('');
-  return `<article class="receipt">
-    <header class="receipt__head">
-      <p class="receipt__store">${escapeHtml(TEXTS.storeName)}</p>
-      <h3>${escapeHtml(TEXTS.receiptTitle)}</h3>
-    </header>
-    ${receiptLine(TEXTS.receiptPeriod, `${fullDate(state.from)} ${TEXTS.periodSep} ${fullDate(state.to)}`)}
-    ${receiptLine(TEXTS.receiptCast, castName(report.castId), 'receipt__line--cast')}
-    <hr>
-    <h4>${escapeHtml(TEXTS.receiptDays)}</h4>
-    ${days}
-    <hr>
-    <h4>${escapeHtml(TEXTS.receiptItems)}</h4>
-    ${items}
-    <hr>
-    ${receiptLine(TEXTS.receiptDrinks, TEXTS.cups(report.drinks))}
-    ${receiptLine(TEXTS.receiptInputDays, TEXTS.days(report.days.length))}
-    <div class="receipt__total"><span>${escapeHtml(TEXTS.receiptTotal)}</span><strong>¥${escapeHtml(number(report.back))}</strong></div>
-    <p class="receipt__issued">${escapeHtml(TEXTS.receiptIssued(issued))}</p>
-  </article>`;
+  return [
+    { type: 'store', label: TEXTS.storeName },
+    { type: 'title', label: TEXTS.receiptTitle },
+    { type: 'line', label: TEXTS.receiptPeriod, value: `${fullDate(state.from)} ${TEXTS.periodSep} ${fullDate(state.to)}` },
+    { type: 'cast', label: TEXTS.receiptCast, value: castName(report.castId) },
+    { type: 'hr' },
+    { type: 'heading', label: TEXTS.receiptDays },
+    ...report.days.flatMap((day) => [
+      { type: 'date', label: shortDate(day.key) },
+      ...day.lines.map(([itemId, entry]) => ({ type: 'dayLine', label: lineLabel(itemId, entry.n), value: number(entryAmount(entry)) })),
+      { type: 'sub', label: TEXTS.receiptSubtotal, value: number(day.subtotal) },
+    ]),
+    { type: 'hr' },
+    { type: 'heading', label: TEXTS.receiptItems },
+    ...orderedEntries(Object.fromEntries(report.items)).map(([itemId, sum]) => ({ type: 'line', label: lineLabel(itemId, sum.n), value: number(sum.amount) })),
+    { type: 'hr' },
+    { type: 'line', label: TEXTS.receiptDrinks, value: TEXTS.cups(report.drinks) },
+    { type: 'line', label: TEXTS.receiptInputDays, value: TEXTS.days(report.days.length) },
+    { type: 'total', label: TEXTS.receiptTotal, value: `¥${number(report.back)}` },
+    { type: 'issued', label: TEXTS.receiptIssued(issued) },
+  ];
+}
+
+function receiptHtml(report) {
+  const line = (row, className) => `<div class="receipt__line ${className}"><span>${escapeHtml(row.label)}</span><span>${escapeHtml(row.value)}</span></div>`;
+  const html = {
+    store: (row) => `<p class="receipt__store">${escapeHtml(row.label)}</p>`,
+    title: (row) => `<h3>${escapeHtml(row.label)}</h3>`,
+    line: (row) => line(row, ''),
+    cast: (row) => line(row, 'receipt__line--cast'),
+    dayLine: (row) => line(row, 'receipt__line--day'),
+    sub: (row) => line(row, 'receipt__line--sub'),
+    hr: () => '<hr>',
+    heading: (row) => `<h4>${escapeHtml(row.label)}</h4>`,
+    date: (row) => `<p class="receipt__date">${escapeHtml(row.label)}</p>`,
+    total: (row) => `<div class="receipt__total"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>`,
+    issued: (row) => `<p class="receipt__issued">${escapeHtml(row.label)}</p>`,
+  };
+  return `<div class="receipt-wrap">
+    <article class="receipt">${receiptRows(report).map((row) => html[row.type](row)).join('')}</article>
+    <button type="button" class="receipt-save" data-action="save-receipt" data-cast="${escapeHtml(report.castId)}">${escapeHtml(TEXTS.saveReceipt)}</button>
+  </div>`;
+}
+
+// ---------- 명세 이미지 ----------
+
+// 줄마다의 높이(px)와 글자 모양. 화면의 영수증(style.css)과 맞춘다.
+const RECEIPT_IMAGE = {
+  width: 340,
+  padding: 20,
+  // 휴대폰 사진으로도 선명하도록 3배로 그린다.
+  scale: 3,
+  font: '"BIZ UDGothic", "Osaka-Mono", "MS Gothic", ui-monospace, monospace',
+  ink: '#2a2f3a',
+  muted: '#6b7280',
+  faint: '#9ca3af',
+  rows: {
+    store: { height: 20, size: 12, color: 'muted', align: 'center', spacing: 2.4 },
+    title: { height: 36, size: 17, weight: 700, align: 'center', spacing: 2.5 },
+    line: { height: 21, size: 13 },
+    cast: { height: 21, size: 13, valueWeight: 700 },
+    dayLine: { height: 21, size: 13, indent: 13 },
+    sub: { height: 21, size: 13, indent: 13, color: 'muted' },
+    hr: { height: 21 },
+    heading: { height: 24, size: 12, weight: 700, color: 'muted' },
+    date: { height: 23, size: 13, weight: 700 },
+    total: { height: 52 },
+    issued: { height: 36, size: 11, color: 'faint', align: 'center' },
+  },
+};
+
+function drawSpacedText(ctx, text, x, y, spacing, align) {
+  if (!spacing) {
+    ctx.textAlign = align;
+    ctx.fillText(text, x, y);
+    return;
+  }
+  const chars = [...text];
+  const width = chars.reduce((sum, char) => sum + ctx.measureText(char).width, 0) + spacing * (chars.length - 1);
+  let cursor = align === 'center' ? x - width / 2 : x;
+  ctx.textAlign = 'left';
+  for (const char of chars) {
+    ctx.fillText(char, cursor, y);
+    cursor += ctx.measureText(char).width + spacing;
+  }
+}
+
+function drawReceipt(report) {
+  const { width, padding, scale, font, rows: styles } = RECEIPT_IMAGE;
+  const rows = receiptRows(report);
+  const bottom = 26;
+  const height = padding + rows.reduce((sum, row) => sum + styles[row.type].height, 0) + bottom;
+  const canvas = document.createElement('canvas');
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, width, height);
+  ctx.textBaseline = 'middle';
+
+  const left = padding;
+  const right = width - padding;
+  let y = padding;
+  for (const row of rows) {
+    const style = styles[row.type];
+    const center = y + style.height / 2;
+    ctx.fillStyle = RECEIPT_IMAGE[style.color || 'ink'];
+    ctx.font = `${style.weight || 400} ${style.size || 13}px ${font}`;
+    if (row.type === 'hr') {
+      ctx.strokeStyle = RECEIPT_IMAGE.faint;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 2]);
+      ctx.beginPath();
+      ctx.moveTo(left, Math.round(center) + 0.5);
+      ctx.lineTo(right, Math.round(center) + 0.5);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else if (row.type === 'total') {
+      ctx.fillStyle = RECEIPT_IMAGE.ink;
+      ctx.fillRect(left, y + 10, right - left, 2);
+      ctx.font = `400 13px ${font}`;
+      ctx.textAlign = 'left';
+      ctx.fillText(row.label, left, y + 34);
+      ctx.font = `700 22px ${font}`;
+      ctx.textAlign = 'right';
+      ctx.fillText(row.value, right, y + 32);
+    } else if (style.align === 'center') {
+      drawSpacedText(ctx, row.label, width / 2, center, style.spacing || 0, 'center');
+    } else {
+      ctx.textAlign = 'left';
+      ctx.fillText(row.label, left + (style.indent || 0), center);
+      if (row.value !== undefined) {
+        ctx.font = `${style.valueWeight || style.weight || 400} ${style.size || 13}px ${font}`;
+        ctx.textAlign = 'right';
+        ctx.fillText(row.value, right, center);
+      }
+    }
+    y += style.height;
+  }
+
+  // 아래쪽 톱니 모양 (화면의 영수증과 같게)
+  ctx.globalCompositeOperation = 'destination-out';
+  for (let x = 7; x < width; x += 14) {
+    ctx.beginPath();
+    ctx.arc(x, height, 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  return canvas;
+}
+
+async function saveReceiptImage(castId) {
+  const report = castReport(castId);
+  if (report.days.length === 0) {
+    return;
+  }
+  let blob;
+  try {
+    await document.fonts.ready;
+    blob = await new Promise((resolve) => drawReceipt(report).toBlob(resolve, 'image/png'));
+    if (!blob) {
+      throw new Error('toBlob failed');
+    }
+  } catch (err) {
+    console.error('画像を作成できませんでした', err);
+    setStatus(TEXTS.receiptImageFailed, true);
+    return;
+  }
+  const safeName = castName(castId).replace(/[\\/:*?"<>|\s]/g, '_');
+  const file = new File([blob], TEXTS.receiptImageFile(safeName, state.from, state.to), { type: 'image/png' });
+
+  // 휴대폰에서는 공유 창(「画像を保存」으로 사진에 저장, LINE 등)으로 보낸다. 안 되면 파일로 내려받는다.
+  const isTouch = window.matchMedia('(pointer: coarse)').matches;
+  if (isTouch && navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file] });
+      setStatus(TEXTS.receiptImageSaved);
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.error('共有に失敗しました', err);
+        downloadFile(file);
+        setStatus(TEXTS.receiptImageSaved);
+      }
+    }
+    return;
+  }
+  downloadFile(file);
+  setStatus(TEXTS.receiptImageSaved);
 }
 
 function exportCsv() {
@@ -888,6 +1045,7 @@ function handleAction(button) {
     'item-remove': () => removeRow(state.data.items, index),
     csv: exportCsv,
     print: printReceipts,
+    'save-receipt': () => saveReceiptImage(cast),
     data: () => document.getElementById('data-dialog').showModal(),
     export: exportData,
     import: () => document.getElementById('import-file').click(),
