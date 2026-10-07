@@ -1,0 +1,125 @@
+// 화면에 나오는 문구는 모두 여기에 모은다.
+// index.html 의 data-text="키" (글자), data-text-label="키" (aria-label) 에 이 값이 들어간다.
+// 품목과 백 금액(처음 값)은 config.js 에 있다.
+window.BACK_TEXTS = {
+  // ---------- 페이지 ----------
+  pageTitle: 'バック管理 | Sweet Afternoon',
+  appTitle: 'バック管理',
+  storeName: 'Sweet Afternoon',
+
+  // ---------- 탭 ----------
+  viewTabsLabel: '画面の切り替え',
+  viewTabs: { entry: '入力', summary: '集計・明細', settings: '設定' },
+
+  // ---------- 날짜 ----------
+  prevDay: '前の日',
+  nextDay: '次の日',
+  today: '今日',
+  weekdays: ['日', '月', '火', '水', '木', '金', '土'],
+  dateLabel: (month, day, weekday) => `${month}月${day}日（${weekday}）`,
+  shortDate: (month, day, weekday) => `${month}/${day}（${weekday}）`,
+  fullDate: (year, month, day) => `${year}/${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}`,
+  yen: (amount) => `${amount.toLocaleString('ja-JP')}円`,
+  cups: (count) => `${count}杯`,
+  days: (count) => `${count}日`,
+
+  // ---------- 입력 ----------
+  noCasts: 'この日のキャストがいません。下の欄に名前を入れて追加するか、「設定」で基本メンバーを登録してください。',
+  dayAddPlaceholder: '名前を入れて追加',
+  dayAddLabel: 'この日に追加するキャストの名前',
+  dayAdd: '＋ 追加',
+  removeFromDay: 'この日のリストから外す',
+  confirmRemoveFromDay: (name, date, amount) => `${date}のリストから${name}を外します。\nこの日の入力（${amount}）も消えます。よろしいですか？`,
+  castPickerLabel: 'キャストを選ぶ',
+  unitBack: (amount) => `@${amount.toLocaleString('ja-JP')}円`,
+  manualHint: '金額を入力',
+  manualPlaceholder: '金額',
+  manualLabel: (name) => `${name}のバック金額（円）`,
+  minus: (name) => `${name}を1つ減らす`,
+  plus: (name) => `${name}を1つ増やす`,
+  castDayTotal: (name) => `${name}　この日のバック`,
+  clearCastDay: 'この日の入力を消す',
+  confirmClearCastDay: (name, date) => `${date}の${name}の入力を消します。よろしいですか？`,
+  dayOverview: 'この日のキャスト別',
+  dayOverviewEmpty: 'この日の入力はまだありません。',
+  dayTotal: 'この日の合計',
+
+  // ---------- 집계・명세 ----------
+  periodLabel: '期間',
+  periodFrom: '開始日',
+  periodTo: '終了日',
+  periodSep: '〜',
+  thisMonth: '今月',
+  lastMonth: '先月',
+  summaryEmpty: 'この期間の入力はまだありません。',
+  storeDrinks: 'ドリンク杯数（全員）',
+  storeBack: 'バック合計（全員）',
+  colCast: 'キャスト',
+  colDays: '入力日数',
+  colDrinks: 'ドリンク',
+  colBack: 'バック',
+  totalRow: '合計',
+  receiptTarget: '明細',
+  receiptAll: '全員',
+  receiptTitle: 'バック明細書',
+  receiptPeriod: '期間',
+  receiptCast: 'キャスト',
+  receiptDays: '日別内訳',
+  receiptItems: '品目別合計',
+  receiptSubtotal: '小計',
+  receiptDrinks: 'ドリンク杯数',
+  receiptInputDays: '入力のある日',
+  receiptTotal: 'バック合計',
+  receiptIssued: (text) => `発行 ${text}`,
+  receiptEmpty: 'この期間の記録はありません。',
+  openReceipt: (name) => `${name}の明細を見る`,
+
+  // ---------- 설정 ----------
+  castsTitle: '基本メンバー',
+  castsHelp: '基本メンバーは毎日の入力画面に出ます。その日だけの追加・お休みは「入力」画面で変えられます。',
+  confirmRemoveMember: (name) => `「${name}」を基本メンバーから外します。これまでの記録と、入力のある日の表示はそのまま残ります。よろしいですか？`,
+  castPlaceholder: '名前',
+  addCast: '＋ キャストを追加',
+  itemsTitle: '品目とバック',
+  itemsHelp: 'バックは1つあたりの金額です。空にすると、入力のときに金額を直接入れる品目になります（ガチャなど）。',
+  itemPlaceholder: '品目名',
+  backPlaceholder: '金額入力',
+  backLabel: 'バック（円）',
+  addItem: '＋ 品目を追加',
+  moveUp: '上へ移動',
+  moveDown: '下へ移動',
+  remove: '削除',
+  confirmRemove: (name) => `「${name}」を削除します。これまでの記録は残ります。よろしいですか？`,
+  newCast: '新しいキャスト',
+  newItem: '新しい品目',
+
+  // ---------- 데이터 이동 창 ----------
+  dataTitle: 'データ移行',
+  dataIntro: '別のスマホやパソコンにバックの記録を移すときや、バックアップに使います。',
+  dataStepExport: '今の端末で「データを書き出す」を押し、できたファイルを送ります（AirDrop、LINE、メールなど）。',
+  dataStepImport: '移したい端末でこの画面を開き、「データを読み込む」で受け取ったファイルを選びます。',
+  dataNote: 'ファイルに入っている日付は読み込んだ内容で上書きされ、ほかの日付はそのまま残ります。キャストと品目も読み込んだ内容で更新されます。',
+  dataExport: 'データを書き出す',
+  dataImport: 'データを読み込む',
+  close: '閉じる',
+
+  // ---------- 아래 버튼 ----------
+  csv: 'CSV書き出し',
+  print: '明細を印刷',
+  dataMove: 'データ移行',
+
+  // ---------- 상태 메시지 ----------
+  autosave: '入力はこの端末に自動で保存されます。',
+  saved: '保存しました。',
+  saveFailed: '保存できませんでした。ブラウザの保存容量を確認してください。',
+  exported: 'バックのデータを書き出しました。',
+  csvExported: 'この期間の集計をCSVで書き出しました。',
+  importInvalid: 'このファイルは読み込めません。「データを書き出す」で作ったファイルを選んでください。',
+  importEmpty: '読み込めるデータがありませんでした。',
+  imported: (count) => `${count}日分の記録を読み込みました。`,
+  confirmImport: (count) => `${count}日分の記録を読み込みます。\n同じ日付の今の内容は上書きされます。よろしいですか？`,
+  periodInvalid: '開始日が終了日より後になっています。',
+
+  // ---------- CSV ----------
+  csvFile: (from, to) => `back_${from.replaceAll('-', '')}-${to.replaceAll('-', '')}.csv`,
+};

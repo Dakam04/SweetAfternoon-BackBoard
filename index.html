@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <!-- 아이폰 「ホーム画面に追加」용 -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="バック管理">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="theme-color" content="#ffffff">
+  <title></title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="js/config.js" defer></script>
+  <script src="js/texts.js" defer></script>
+  <script src="js/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1 data-text="appTitle"></h1>
+    <nav class="view-tabs" id="view-tabs" role="tablist" data-text-label="viewTabsLabel"></nav>
+  </header>
+
+  <main class="layout">
+    <!-- 입력: 날짜 → 캐스트 → 품목 개수 -->
+    <section class="view" id="view-entry" role="tabpanel">
+      <div class="pager">
+        <button type="button" class="pager__step" data-action="prev-day" data-text-label="prevDay">‹</button>
+        <label class="pager__label">
+          <span id="entry-date-label"></span>
+          <input type="date" id="entry-date">
+        </label>
+        <button type="button" class="pager__step" data-action="next-day" data-text-label="nextDay">›</button>
+        <button type="button" data-action="today" data-text="today"></button>
+      </div>
+      <p class="empty" id="no-casts" data-text="noCasts" hidden></p>
+      <div class="cast-picker" id="cast-picker" role="radiogroup" data-text-label="castPickerLabel"></div>
+      <div class="entry">
+        <div class="card" id="entry-items"></div>
+        <div class="card" id="day-overview"></div>
+      </div>
+    </section>
+
+    <!-- 집계・명세: 기간을 골라 캐스트별 합계와 영수증 모양 명세 -->
+    <section class="view" id="view-summary" role="tabpanel" hidden>
+      <div class="pager period">
+        <label class="period__date">
+          <span data-text="periodFrom"></span>
+          <input type="date" id="period-from">
+        </label>
+        <span class="period__sep" data-text="periodSep"></span>
+        <label class="period__date">
+          <span data-text="periodTo"></span>
+          <input type="date" id="period-to">
+        </label>
+        <div class="period__presets">
+          <button type="button" data-action="this-month" data-text="thisMonth"></button>
+          <button type="button" data-action="last-month" data-text="lastMonth"></button>
+        </div>
+      </div>
+      <div class="summary">
+        <div class="card" id="summary"></div>
+        <div class="receipt-pane">
+          <label class="receipt-controls">
+            <span data-text="receiptTarget"></span>
+            <select id="receipt-cast"></select>
+          </label>
+          <div class="receipts" id="receipts"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 설정: 캐스트, 품목과 백 금액 -->
+    <section class="view" id="view-settings" role="tabpanel" hidden>
+      <div class="settings">
+        <div class="card">
+          <h2 data-text="castsTitle"></h2>
+          <p class="help" data-text="castsHelp"></p>
+          <div id="cast-list"></div>
+          <button type="button" class="add" data-action="add-cast" data-text="addCast"></button>
+        </div>
+        <div class="card">
+          <h2 data-text="itemsTitle"></h2>
+          <p class="help" data-text="itemsHelp"></p>
+          <div id="item-list"></div>
+          <button type="button" class="add" data-action="add-item" data-text="addItem"></button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog class="data-dialog" id="data-dialog" aria-labelledby="data-dialog-title">
+    <h2 id="data-dialog-title" data-text="dataTitle"></h2>
+    <p data-text="dataIntro"></p>
+    <ol class="data-dialog__steps">
+      <li data-text="dataStepExport"></li>
+      <li data-text="dataStepImport"></li>
+    </ol>
+    <p class="data-dialog__note" data-text="dataNote"></p>
+    <div class="data-dialog__actions">
+      <button type="button" data-action="export" class="primary" data-text="dataExport"></button>
+      <button type="button" data-action="import" data-text="dataImport"></button>
+      <input type="file" id="import-file" accept=".json,application/json" hidden>
+    </div>
+    <div class="data-dialog__footer">
+      <button type="button" data-action="close-data" data-text="close"></button>
+    </div>
+  </dialog>
+
+  <footer class="actions">
+    <p class="actions__status" id="status" role="status" aria-live="polite"></p>
+    <div class="actions__buttons">
+      <button type="button" data-action="csv" data-text="csv"></button>
+      <button type="button" data-action="print" data-text="print"></button>
+      <button type="button" data-action="data" data-text="dataMove"></button>
+    </div>
+  </footer>
+</body>
+</html>
