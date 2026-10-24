@@ -176,6 +176,73 @@ function normalizeData(raw) {
   };
 }
 
+// 두 기록을 하나로 더한다. 백 금액이 다르면 합계가 맞도록 1개당 금액을 평균 낸다.
+function addEntries(a, b) {
+  if ('n' in a && 'n' in b) {
+    const n = a.n + b.n;
+    return { n, back: a.back === b.back ? a.back : Math.round((a.n * a.back + b.n * b.back) / n) };
+  }
+  const total = (entry) => entry.amount ?? entry.n * entry.back;
+  return { amount: total(a) + total(b) };
+}
+
+// 이름(앞뒤 공백 무시)이 같은 캐스트는 한 사람으로 합친다.
+// 남기는 쪽은 기본 멤버를 우선하고, 나머지의 기록·그날 목록을 그쪽으로 옮긴다.
+// 수기로 추가한 뒤 설정에 같은 이름을 넣었거나, 다른 기기의 데이터를 읽어 왔을 때 생기는 중복을 없앤다.
+// 합친 캐스트 수를 돌려준다.
+function mergeSameNameCasts(data) {
+  const groups = new Map();
+  for (const cast of data.casts) {
+    const name = cast.name.trim();
+    if (name) {
+      groups.set(name, [...(groups.get(name) || []), cast]);
+    }
+  }
+  const renamed = new Map();
+  for (const group of groups.values()) {
+    if (group.length < 2) {
+      continue;
+    }
+    const keeper = group.find((cast) => cast.member) || group[0];
+    for (const cast of group) {
+      if (cast !== keeper) {
+        renamed.set(cast.id, keeper.id);
+      }
+    }
+  }
+  if (renamed.size === 0) {
+    return 0;
+  }
+
+  data.casts = data.casts.filter((cast) => !renamed.has(cast.id));
+  for (const day of Object.values(data.days)) {
+    for (const [fromId, toId] of renamed) {
+      const moving = day[fromId];
+      if (!moving) {
+        continue;
+      }
+      const target = (day[toId] ??= {});
+      for (const [itemId, entry] of Object.entries(moving)) {
+        target[itemId] = target[itemId] ? addEntries(target[itemId], entry) : entry;
+      }
+      delete day[fromId];
+    }
+  }
+  for (const roster of Object.values(data.rosters)) {
+    const map = (list) => [...new Set(list.map((id) => renamed.get(id) || id))];
+    roster.added = map(roster.added);
+    // 한쪽이라도 그날 추가돼 있었으면 보이게 둔다.
+    roster.hidden = map(roster.hidden).filter((id) => !roster.added.includes(id));
+  }
+  if (renamed.has(state.castId)) {
+    state.castId = renamed.get(state.castId);
+  }
+  if (renamed.has(state.receiptCast)) {
+    state.receiptCast = renamed.get(state.receiptCast);
+  }
+  return renamed.size;
+}
+
 function loadData() {
   let saved = {};
   try {
@@ -187,6 +254,14 @@ function loadData() {
   // 처음 열었을 때는 config.js 의 품목으로 시작한다.
   if (!Array.isArray(saved.items)) {
     data.items = CONFIG.items.map(normalizeItem);
+  }
+  // 이미 저장된 중복도 열 때 합쳐서 저장해 둔다.
+  if (mergeSameNameCasts(data)) {
+    try {
+      localStorage.setItem(CONFIG.storageKey, JSON.stringify(data));
+    } catch (err) {
+      console.error('バックの保存に失敗しました', err);
+    }
   }
   return data;
 }
@@ -902,23 +977,12 @@ function removeRow(list, index) {
   renderSettings();
 }
 
-// 새로 추가한 기본 멤버에 이미 있는 캐스트(그날만 추가한 사람, 기본 멤버에서 뺀 사람)와 같은 이름을 넣으면,
-// 지난 기록이 이어지도록 새 행 대신 그 캐스트를 같은 자리에 기본 멤버로 넣는다.
-function mergeSameNameCast(index) {
-  const casts = state.data.casts;
-  const cast = casts[index];
-  const name = cast?.name.trim();
-  const other = casts.find((row) => row !== cast && !row.member && row.name.trim() === name);
-  const used = Object.values(state.data.days).some((day) => cast?.id in day)
-    || Object.values(state.data.rosters).some((roster) => roster.added.includes(cast?.id) || roster.hidden.includes(cast?.id));
-  if (!other || !name || used) {
-    return;
+// 설정에서 이름을 정한 뒤 같은 이름의 캐스트가 생겼으면 한 사람으로 합친다.
+function mergeCastsAfterRename() {
+  if (mergeSameNameCasts(state.data)) {
+    saveData();
+    renderSettings();
   }
-  other.member = true;
-  casts.splice(casts.indexOf(other), 1);
-  casts.splice(casts.indexOf(cast), 1, other);
-  saveData();
-  renderSettings();
 }
 
 function addRow(kind, row) {
@@ -993,6 +1057,8 @@ async function importData(file) {
   state.data.items = mergeById(state.data.items, imported.items);
   Object.assign(state.data.days, imported.days);
   Object.assign(state.data.rosters, imported.rosters);
+  // id 가 달라도 이름이 같으면 같은 사람이다 (다른 기기에서 따로 추가한 경우 등).
+  mergeSameNameCasts(state.data);
   if (saveData()) {
     setStatus(TEXTS.imported(dayCount));
   }
@@ -1104,7 +1170,7 @@ function init() {
   });
   document.getElementById('view-settings').addEventListener('change', (event) => {
     if (event.target.dataset.kind === 'cast') {
-      mergeSameNameCast(Number(event.target.dataset.index));
+      mergeCastsAfterRename();
     }
   });
 
