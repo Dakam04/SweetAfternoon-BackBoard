@@ -21,7 +21,8 @@ const state = {
   // days: { 'YYYY-MM-DD': { castId: { itemId: { n, back } | { amount } } } }
   //   back 은 입력한 때의 백 금액 (나중에 금액을 바꿔도 지난 기록은 그대로)
   // rosters: { 'YYYY-MM-DD': { added: [castId], hidden: [castId] } }  그날만 추가·제외한 캐스트
-  // works: { 'YYYY-MM-DD': { castId: { start, end, rate, nightRate, nightStart, nightEnd, unit } } }  그날의 근무
+  // works: { 'YYYY-MM-DD': { castId: { start, end, break, rate, nightRate, nightStart, nightEnd, unit } } }  그날의 근무
+  //   break: 휴게(분). 근무 시간의 끝(퇴근 쪽)부터 뺀다.
   //   rate, nightRate: 그날 그 사람의 시급·심야 시급. 처음엔 설정 값이고, 입력 화면에서 그날만 바꿀 수 있다.
   //   nightStart〜nightEnd, unit(계산 단위 분)도 입력한 때의 값 (나중에 설정을 바꿔도 지난 기록은 그대로)
   // wage: { base, nightRate }  시급 설정. cast.rate / cast.nightRate 가 있으면 그쪽을 쓴다.
@@ -139,6 +140,7 @@ function normalizeWork(value) {
   return {
     start: value.start,
     end: value.end,
+    break: toAmount(value.break),
     rate: toAmount(value.rate),
     nightRate: toAmount(value.nightRate),
     nightStart: time(value.nightStart, CONFIG.nightStart),
@@ -450,10 +452,12 @@ function nightRateOf(work) {
 }
 
 // unit(30분) 단위로 계산한다. 단위에 못 미치는 끝자리는 버린다.
+// 휴게는 퇴근 쪽부터 뺀다 (출근부터 「근무 − 휴게」만큼만 센다).
 // 각 단위는 시작 시각이 심야 시간대면 심야 시급, 아니면 기본 시급. 원 미만은 버린다.
 function workResult(work) {
   const start = toMinutes(work.start);
-  const blocks = Math.floor(shiftMinutes(work) / work.unit);
+  const worked = Math.max(0, shiftMinutes(work) - (work.break || 0));
+  const blocks = Math.floor(worked / work.unit);
   let nightBlocks = 0;
   for (let i = 0; i < blocks; i += 1) {
     if (inNight((start + i * work.unit) % DAY_MINUTES, work)) {
@@ -461,7 +465,11 @@ function workResult(work) {
     }
   }
   const pay = Math.floor((((blocks - nightBlocks) * work.rate + nightBlocks * nightRateOf(work)) * work.unit) / 60);
-  return { minutes: blocks * work.unit, night: nightBlocks * work.unit, actual: shiftMinutes(work), pay };
+  const minutes = blocks * work.unit;
+  // nightPay: 그중 심야 시간분 (명세의 내역용)
+  const nightPay = Math.min(pay, Math.floor((nightBlocks * nightRateOf(work) * work.unit) / 60));
+  // paidEnd: 휴게를 빼고 실제로 계산한 끝 시각
+  return { minutes, night: nightBlocks * work.unit, actual: shiftMinutes(work), paidEnd: fromMinutes((start + minutes) % DAY_MINUTES), pay, nightPay };
 }
 
 function workOf(key, castId) {
@@ -520,7 +528,7 @@ function changeWorkTime() {
   const end = parseTime(endText);
   // 그날 시급 칸은 비우면 설정의 시급
   const base = workOf(state.date, state.castId) || wageSnapshot(state.castId);
-  const rates = { rate: toAmount(field('rate')) || wageSnapshot(state.castId).rate, nightRate: toAmount(field('nightRate')) };
+  const rates = { rate: toAmount(field('rate')) || wageSnapshot(state.castId).rate, nightRate: toAmount(field('nightRate')), break: toAmount(field('break')) };
   state.workDraft = null;
   if (start && end) {
     setWork(state.date, state.castId, { ...base, ...rates, start, end });
@@ -911,11 +919,12 @@ function workHtml(cast) {
   const work = workOf(state.date, cast.id);
   const draft = state.workDraft?.key === state.date && state.workDraft.castId === cast.id ? state.workDraft : null;
   const setting = wageSnapshot(cast.id);
-  const shown = work || { ...setting, ...(draft && { rate: draft.rate, nightRate: draft.nightRate }) };
+  const shown = work || { ...setting, ...(draft && { rate: draft.rate, nightRate: draft.nightRate, break: draft.break }) };
   const result = work ? workResult(work) : null;
   const info = [TEXTS.nightRange(shown.nightStart, shown.nightEnd), TEXTS.timeUnit(shown.unit)];
   if (result) {
-    info.unshift(result.night ? TEXTS.hoursWithNight(TEXTS.hours(result.minutes), TEXTS.hours(result.night)) : TEXTS.hours(result.minutes));
+    const hours = result.night ? TEXTS.hoursWithNight(TEXTS.hours(result.minutes), TEXTS.hours(result.night)) : TEXTS.hours(result.minutes);
+    info.unshift(...(work.break ? [hours, TEXTS.paidRange(work.start, result.paidEnd)] : [hours]));
   }
   const notes = [];
   if (!shown.rate) {
@@ -938,9 +947,16 @@ function workHtml(cast) {
   return `<div class="work${work ? ' is-active' : ''}">
     <span class="work__label">${escapeHtml(TEXTS.work)}</span>
     <span class="work__times">
-      ${timeComboHtml('start', work?.start ?? draft?.start ?? '', TEXTS.workStart, TEXTS.workStartPlaceholder)}
-      <span>${escapeHtml(TEXTS.workSep)}</span>
-      ${timeComboHtml('end', work?.end ?? draft?.end ?? '', TEXTS.workEnd, TEXTS.workEndPlaceholder)}
+      <span class="work__range">
+        ${timeComboHtml('start', work?.start ?? draft?.start ?? '', TEXTS.workStart, TEXTS.workStartPlaceholder)}
+        <span>${escapeHtml(TEXTS.workSep)}</span>
+        ${timeComboHtml('end', work?.end ?? draft?.end ?? '', TEXTS.workEnd, TEXTS.workEndPlaceholder)}
+      </span>
+      <label class="work__break">
+        <span>${escapeHtml(TEXTS.breakLabel)}</span>
+        <input type="number" inputmode="numeric" min="0" step="${shown.unit}" data-work="break" value="${shown.break || ''}" placeholder="0" aria-label="${escapeHtml(TEXTS.breakAria)}">
+        <span>${escapeHtml(TEXTS.minutesUnit)}</span>
+      </label>
     </span>
     <span class="entry-row__amount">${result ? escapeHtml(TEXTS.yen(result.pay)) : ''}</span>
     <span class="work__rates">
@@ -1031,7 +1047,7 @@ function moveDate(key) {
 
 // 기간 안의 한 캐스트 합계
 function castReport(castId) {
-  const report = { castId, back: 0, wage: 0, total: 0, minutes: 0, night: 0, drinks: 0, days: [], items: new Map() };
+  const report = { castId, back: 0, wage: 0, total: 0, minutes: 0, night: 0, nightPay: 0, breaks: 0, drinks: 0, days: [], items: new Map() };
   const keys = [...new Set([...Object.keys(state.data.days), ...Object.keys(state.data.works)])]
     .filter((key) => key >= state.from && key <= state.to)
     .sort();
@@ -1047,6 +1063,8 @@ function castReport(castId) {
       report.wage += result.pay;
       report.minutes += result.minutes;
       report.night += result.night;
+      report.breaks += work.break || 0;
+      report.nightPay += result.nightPay;
     }
     let subtotal = result?.pay || 0;
     for (const [itemId, entry] of lines) {
@@ -1173,7 +1191,7 @@ function receiptRows(report) {
     { type: 'heading', label: TEXTS.receiptDays },
     ...report.days.flatMap((day) => [
       { type: 'date', label: shortDate(day.key) },
-      ...(day.work ? [{ type: 'dayLine', label: TEXTS.receiptWorkLine(day.work.start, day.work.end, TEXTS.hours(day.result.minutes)), value: number(day.result.pay) }] : []),
+      ...(day.work ? [{ type: 'dayLine', label: TEXTS.receiptWorkLine(day.work.start, day.work.end, TEXTS.hours(day.result.minutes), day.work.break), value: number(day.result.pay) }] : []),
       ...day.lines.map(([itemId, entry]) => ({ type: 'dayLine', label: lineLabel(itemId, entry.n), value: number(entryAmount(entry)) })),
       { type: 'sub', label: TEXTS.receiptSubtotal, value: number(day.subtotal) },
     ]),
@@ -1182,16 +1200,24 @@ function receiptRows(report) {
       { type: 'heading', label: TEXTS.receiptItems },
       ...itemRows.map(([itemId, sum]) => ({ type: 'line', label: lineLabel(itemId, sum.n), value: number(sum.amount) })),
     ] : []),
-    { type: 'hr' },
-    ...(hasWork ? [
-      { type: 'line', label: TEXTS.receiptHours, value: TEXTS.hours(report.minutes) },
-      ...(report.night ? [{ type: 'line', label: TEXTS.receiptNightHours, value: TEXTS.hours(report.night) }] : []),
-    ] : []),
-    { type: 'line', label: TEXTS.receiptDrinks, value: TEXTS.cups(report.drinks) },
-    { type: 'line', label: TEXTS.receiptInputDays, value: TEXTS.days(report.days.length) },
+    // 기간 전체의 근무 시간 합계 (휴게를 뺀 계산 시간)
     ...(hasWork ? [
       { type: 'hr' },
+      { type: 'heading', label: TEXTS.receiptHoursTitle },
+      { type: 'strong', label: TEXTS.receiptHours, value: TEXTS.hours(report.minutes) },
+      ...(report.night ? [{ type: 'line', label: TEXTS.receiptNightHours, value: TEXTS.hours(report.night) }] : []),
+      ...(report.breaks ? [{ type: 'line', label: TEXTS.receiptBreak, value: TEXTS.hours(report.breaks) }] : []),
+      { type: 'line', label: TEXTS.receiptWorkDays, value: TEXTS.days(report.days.filter((day) => day.work).length) },
+    ] : []),
+    { type: 'hr' },
+    { type: 'line', label: TEXTS.receiptDrinks, value: TEXTS.cups(report.drinks) },
+    { type: 'line', label: TEXTS.receiptInputDays, value: TEXTS.days(report.days.length) },
+    // 기간 전체의 금액 합계
+    ...(hasWork ? [
+      { type: 'hr' },
+      { type: 'heading', label: TEXTS.receiptAmountTitle },
       { type: 'line', label: TEXTS.receiptWage, value: number(report.wage) },
+      ...(report.nightPay ? [{ type: 'line', label: TEXTS.receiptNightPay, value: number(report.nightPay) }] : []),
       { type: 'line', label: TEXTS.receiptTotal, value: number(report.back) },
     ] : []),
     { type: 'total', label: hasWork ? TEXTS.receiptGrandTotal : TEXTS.receiptTotal, value: `¥${number(report.total)}` },
@@ -1206,6 +1232,7 @@ function receiptHtml(report) {
     title: (row) => `<h3>${escapeHtml(row.label)}</h3>`,
     line: (row) => line(row, ''),
     cast: (row) => line(row, 'receipt__line--cast'),
+    strong: (row) => line(row, 'receipt__line--strong'),
     dayLine: (row) => line(row, 'receipt__line--day'),
     sub: (row) => line(row, 'receipt__line--sub'),
     hr: () => '<hr>',
@@ -1237,6 +1264,7 @@ const RECEIPT_IMAGE = {
     title: { height: 36, size: 17, weight: 700, align: 'center', spacing: 2.5 },
     line: { height: 21, size: 13 },
     cast: { height: 21, size: 13, valueWeight: 700 },
+    strong: { height: 25, size: 15, weight: 700 },
     dayLine: { height: 21, size: 13, indent: 13 },
     sub: { height: 21, size: 13, indent: 13, color: 'muted' },
     hr: { height: 21 },
@@ -1374,7 +1402,7 @@ function exportCsv() {
   const reports = periodReports();
   const usedIds = new Set(reports.flatMap((report) => [...report.items.keys()]));
   const items = state.data.items.filter((item) => usedIds.has(item.id));
-  const header = [TEXTS.colCast, TEXTS.colDays, TEXTS.csvHours, TEXTS.csvNightHours, TEXTS.receiptDrinks, ...items.map((item) => item.name), TEXTS.receiptWage, TEXTS.receiptTotal, TEXTS.receiptGrandTotal];
+  const header = [TEXTS.colCast, TEXTS.colDays, TEXTS.csvHours, TEXTS.csvNightHours, TEXTS.csvBreakHours, TEXTS.receiptDrinks, ...items.map((item) => item.name), TEXTS.receiptWage, TEXTS.receiptTotal, TEXTS.receiptGrandTotal];
   // 품목 칸: 개수로 센 품목은 개수, 금액을 직접 넣은 품목은 금액
   // 근무 시간은 엑셀에서 계산하기 쉽도록 소수 (5時間30分 → 5.5)
   const rows = reports.map((report) => [
@@ -1382,6 +1410,7 @@ function exportCsv() {
     report.days.length,
     Math.round((report.minutes / 60) * 100) / 100,
     Math.round((report.night / 60) * 100) / 100,
+    Math.round((report.breaks / 60) * 100) / 100,
     report.drinks,
     ...items.map((item) => {
       const sum = report.items.get(item.id);

@@ -336,10 +336,34 @@ select:focus {
   grid-column: 1 / -1;
   grid-row: 2;
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  color: var(--muted);
+}
+
+/* 출근〜퇴근 */
+.work__range {
+  display: flex;
+  flex: 1 1 15em;
   align-items: center;
   gap: 6px;
   max-width: 22em;
-  color: var(--muted);
+}
+
+/* 휴게 (분). 좁은 화면에서는 다음 줄로 내려간다. */
+.work__break {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.work__break input {
+  width: 4.5em;
+  min-height: 36px;
+  padding: 5px 8px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 그날의 시급·심야 시급 */
@@ -667,6 +691,13 @@ select:focus {
   font-weight: 700;
 }
 
+/* 기간의 총 근무 시간 */
+.receipt__line--strong {
+  padding: 2px 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
 .receipt__line--day {
   padding-left: 1em;
 }
@@ -905,6 +936,7 @@ select:focus {
   .view-tabs__tab,
   .add,
   .work__rates input,
+  .work__break input,
   .day-add input,
   .day-add button {
     min-height: 44px;
