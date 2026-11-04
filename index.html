@@ -73,14 +73,34 @@
       </div>
     </section>
 
-    <!-- 설정: 캐스트, 품목과 백 금액 -->
+    <!-- 설정: 캐스트, 시급, 품목과 백 금액 -->
     <section class="view" id="view-settings" role="tabpanel" hidden>
       <div class="settings">
-        <div class="card">
-          <h2 data-text="castsTitle"></h2>
-          <p class="help" data-text="castsHelp"></p>
-          <div id="cast-list"></div>
-          <button type="button" class="add" data-action="add-cast" data-text="addCast"></button>
+        <div class="settings__col">
+          <div class="card">
+            <h2 data-text="castsTitle"></h2>
+            <p class="help" data-text="castsHelp"></p>
+            <div id="cast-list"></div>
+            <button type="button" class="add" data-action="add-cast" data-text="addCast"></button>
+          </div>
+          <div class="card">
+            <h2 data-text="wageTitle"></h2>
+            <p class="help" data-text="wageHelp"></p>
+            <label class="wage-base">
+              <span data-text="wageBase"></span>
+              <span class="yen-input">
+                <input type="number" inputmode="numeric" min="0" step="10" id="wage-base" data-wage="base">
+                <span>円</span>
+              </span>
+            </label>
+            <label class="wage-base">
+              <span data-text="wageNight"></span>
+              <span class="yen-input">
+                <input type="number" inputmode="numeric" min="0" step="10" id="wage-night" data-wage="nightRate">
+                <span>円</span>
+              </span>
+            </label>
+          </div>
         </div>
         <div class="card">
           <h2 data-text="itemsTitle"></h2>

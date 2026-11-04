@@ -21,8 +21,16 @@ const state = {
   // days: { 'YYYY-MM-DD': { castId: { itemId: { n, back } | { amount } } } }
   //   back 은 입력한 때의 백 금액 (나중에 금액을 바꿔도 지난 기록은 그대로)
   // rosters: { 'YYYY-MM-DD': { added: [castId], hidden: [castId] } }  그날만 추가·제외한 캐스트
-  data: { casts: [], items: [], days: {}, rosters: {} },
+  // works: { 'YYYY-MM-DD': { castId: { start, end, rate, nightRate, nightStart, nightEnd, unit } } }  그날의 근무
+  //   rate, nightRate: 그날 그 사람의 시급·심야 시급. 처음엔 설정 값이고, 입력 화면에서 그날만 바꿀 수 있다.
+  //   nightStart〜nightEnd, unit(계산 단위 분)도 입력한 때의 값 (나중에 설정을 바꿔도 지난 기록은 그대로)
+  // wage: { base, nightRate }  시급 설정. cast.rate / cast.nightRate 가 있으면 그쪽을 쓴다.
+  data: { casts: [], items: [], days: {}, rosters: {}, works: {}, wage: { base: 0, nightRate: 0 } },
+  // 출근·퇴근 중 하나만 넣었거나 시각을 잘못 넣은 상태 (입력한 글자 그대로 둔다)
+  workDraft: null,
 };
+
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 // ---------- 날짜 ----------
 
@@ -114,7 +122,49 @@ function normalizeCast(value) {
   }
   // 예전 데이터(removed)는 「삭제하지 않은 것 = 기본 멤버」로 읽는다.
   const member = typeof value.member === 'boolean' ? value.member : value.removed !== true;
-  return { id: value.id, name: typeof value.name === 'string' ? value.name : '', member };
+  // rate / nightRate: 그 사람만의 시급·심야 시급. 0 이면 「設定」의 시급을 쓴다.
+  return { id: value.id, name: typeof value.name === 'string' ? value.name : '', member, rate: toAmount(value.rate), nightRate: toAmount(value.nightRate) };
+}
+
+// 시급 설정. 금액은 「設定」에서 직접 넣는다. 심야 시간대는 config.js (nightStart〜nightEnd)
+function normalizeWage(value) {
+  return { base: toAmount(value?.base), nightRate: toAmount(value?.nightRate) };
+}
+
+function normalizeWork(value) {
+  if (!value || typeof value !== 'object' || !TIME_PATTERN.test(value.start) || !TIME_PATTERN.test(value.end)) {
+    return null;
+  }
+  const time = (text, fallback) => (TIME_PATTERN.test(text) ? text : fallback);
+  return {
+    start: value.start,
+    end: value.end,
+    rate: toAmount(value.rate),
+    nightRate: toAmount(value.nightRate),
+    nightStart: time(value.nightStart, CONFIG.nightStart),
+    nightEnd: time(value.nightEnd, CONFIG.nightEnd),
+    unit: toAmount(value.unit) || CONFIG.timeUnitMinutes,
+  };
+}
+
+function normalizeWorks(value) {
+  const works = {};
+  if (!value || typeof value !== 'object') {
+    return works;
+  }
+  for (const [key, casts] of Object.entries(value)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key) || !casts || typeof casts !== 'object') {
+      continue;
+    }
+    for (const [castId, raw] of Object.entries(casts)) {
+      const work = normalizeWork(raw);
+      if (work) {
+        works[key] ??= {};
+        works[key][castId] = work;
+      }
+    }
+  }
+  return works;
 }
 
 function normalizeItem(value) {
@@ -173,6 +223,9 @@ function normalizeData(raw) {
     items: list(raw?.items, normalizeItem),
     days: normalizeDays(raw?.days),
     rosters: normalizeRosters(raw?.rosters),
+    works: normalizeWorks(raw?.works),
+    // 시급 설정이 없는 데이터(예전 데이터)는 null. 불러올 때 처음 설정으로 채운다.
+    wage: raw?.wage && typeof raw.wage === 'object' ? normalizeWage(raw.wage) : null,
   };
 }
 
@@ -207,6 +260,9 @@ function mergeSameNameCasts(data) {
     for (const cast of group) {
       if (cast !== keeper) {
         renamed.set(cast.id, keeper.id);
+        // 남기는 쪽에 직접 넣은 시급이 없으면 합쳐지는 쪽 시급을 이어받는다.
+        keeper.rate ||= cast.rate || 0;
+        keeper.nightRate ||= cast.nightRate || 0;
       }
     }
   }
@@ -226,6 +282,15 @@ function mergeSameNameCasts(data) {
         target[itemId] = target[itemId] ? addEntries(target[itemId], entry) : entry;
       }
       delete day[fromId];
+    }
+  }
+  // 근무 기록: 같은 날 둘 다 있으면 남기는 쪽 기록을 쓴다 (시각을 더할 수는 없으므로).
+  for (const day of Object.values(data.works || {})) {
+    for (const [fromId, toId] of renamed) {
+      if (day[fromId]) {
+        day[toId] ??= day[fromId];
+        delete day[fromId];
+      }
     }
   }
   for (const roster of Object.values(data.rosters)) {
@@ -255,6 +320,7 @@ function loadData() {
   if (!Array.isArray(saved.items)) {
     data.items = CONFIG.items.map(normalizeItem);
   }
+  data.wage ??= normalizeWage({});
   // 이미 저장된 중복도 열 때 합쳐서 저장해 둔다.
   if (mergeSameNameCasts(data)) {
     try {
@@ -332,6 +398,340 @@ function drinkCount(entries) {
   return Object.entries(entries).reduce((sum, [itemId, entry]) => sum + (isDrink(itemId) ? entry.n || 0 : 0), 0);
 }
 
+// ---------- 시급 ----------
+
+const DAY_MINUTES = 24 * 60;
+
+function toMinutes(time) {
+  const [h, m] = time.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function fromMinutes(minutes) {
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+// 직접 입력한 시각을 HH:MM 으로. 「18」「1830」「18:30」「18時30分」「１８：３０」, 26:00 (= 02:00) 까지 받는다.
+// 읽을 수 없으면 ''
+function parseTime(text) {
+  const plain = String(text)
+    .replace(/[０-９：]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace(/時/g, ':')
+    .replace(/分|\s/g, '');
+  const match = plain.match(/^(\d{1,2})(?::?(\d{2}))?:?$/);
+  if (!match) {
+    return '';
+  }
+  const hour = Number(match[1]);
+  const minute = Number(match[2] || 0);
+  return hour <= 29 && minute <= 59 ? fromMinutes((hour % 24) * 60 + minute) : '';
+}
+
+// minute: 0〜1439. 끝이 시작보다 이르면 날짜를 넘는 시간대 (22:00〜05:00)
+function inNight(minute, work) {
+  const start = toMinutes(work.nightStart);
+  const end = toMinutes(work.nightEnd);
+  if (start === end) {
+    return false;
+  }
+  return start < end ? minute >= start && minute < end : minute >= start || minute < end;
+}
+
+// 퇴근이 출근보다 이르면 다음 날 퇴근
+function shiftMinutes(work) {
+  const start = toMinutes(work.start);
+  const end = toMinutes(work.end);
+  return end < start ? end + DAY_MINUTES - start : end - start;
+}
+
+// 심야 시급이 0 이면 심야도 기본 시급
+function nightRateOf(work) {
+  return work.nightRate || work.rate;
+}
+
+// unit(30분) 단위로 계산한다. 단위에 못 미치는 끝자리는 버린다.
+// 각 단위는 시작 시각이 심야 시간대면 심야 시급, 아니면 기본 시급. 원 미만은 버린다.
+function workResult(work) {
+  const start = toMinutes(work.start);
+  const blocks = Math.floor(shiftMinutes(work) / work.unit);
+  let nightBlocks = 0;
+  for (let i = 0; i < blocks; i += 1) {
+    if (inNight((start + i * work.unit) % DAY_MINUTES, work)) {
+      nightBlocks += 1;
+    }
+  }
+  const pay = Math.floor((((blocks - nightBlocks) * work.rate + nightBlocks * nightRateOf(work)) * work.unit) / 60);
+  return { minutes: blocks * work.unit, night: nightBlocks * work.unit, actual: shiftMinutes(work), pay };
+}
+
+function workOf(key, castId) {
+  return state.data.works[key]?.[castId] || null;
+}
+
+function workPay(key, castId) {
+  const work = workOf(key, castId);
+  return work ? workResult(work).pay : 0;
+}
+
+// 그날 한 캐스트의 시급 + 백
+function castDayTotal(key, castId) {
+  return workPay(key, castId) + sumEntries(entriesOf(key, castId));
+}
+
+// 지금 설정의 그 사람 시급 (근무를 처음 넣을 때 함께 저장)
+function wageSnapshot(castId) {
+  const cast = castById(castId);
+  const wage = state.data.wage;
+  return {
+    rate: cast?.rate || wage.base,
+    nightRate: cast?.nightRate || wage.nightRate,
+    nightStart: CONFIG.nightStart,
+    nightEnd: CONFIG.nightEnd,
+    unit: CONFIG.timeUnitMinutes,
+  };
+}
+
+// 그날의 시급이 지금 설정과 다른지 (그날만 바꿨거나, 넣은 뒤 설정을 바꿨을 때)
+function isStaleWork(work, castId) {
+  const now = wageSnapshot(castId);
+  return Object.keys(now).some((key) => work[key] !== now[key]);
+}
+
+function setWork(key, castId, work) {
+  const works = state.data.works;
+  if (work) {
+    works[key] ??= {};
+    works[key][castId] = work;
+  } else if (works[key]?.[castId]) {
+    delete works[key][castId];
+    if (Object.keys(works[key]).length === 0) {
+      delete works[key];
+    }
+  }
+  saveData();
+}
+
+// 출근·퇴근·그날 시급 칸을 바꿨을 때. 시각이 둘 다 맞으면 저장, 아니면 입력한 글자를 그대로 두고 기다린다.
+function changeWorkTime() {
+  const field = (name) => document.querySelector(`[data-work="${name}"]`).value.trim();
+  const startText = field('start');
+  const endText = field('end');
+  const start = parseTime(startText);
+  const end = parseTime(endText);
+  // 그날 시급 칸은 비우면 설정의 시급
+  const base = workOf(state.date, state.castId) || wageSnapshot(state.castId);
+  const rates = { rate: toAmount(field('rate')) || wageSnapshot(state.castId).rate, nightRate: toAmount(field('nightRate')) };
+  state.workDraft = null;
+  if (start && end) {
+    setWork(state.date, state.castId, { ...base, ...rates, start, end });
+  } else {
+    if (startText || endText) {
+      state.workDraft = { key: state.date, castId: state.castId, start: startText, end: endText, ...rates, invalid: Boolean((startText && !start) || (endText && !end)) };
+    }
+    setWork(state.date, state.castId, null);
+  }
+  renderEntry();
+}
+
+// 그날의 시급을 지금 설정 값으로 되돌린다.
+function refreshWorkRate() {
+  const work = workOf(state.date, state.castId);
+  if (work) {
+    setWork(state.date, state.castId, { ...work, ...wageSnapshot(state.castId), start: work.start, end: work.end });
+    renderEntry();
+  }
+}
+
+// ---------- 시각 입력 (직접 입력 + 후보 목록) ----------
+
+// 00:00 은 마감(퇴근)으로 자주 쓰므로 23:30 다음, 목록 맨 아래에 둔다.
+function timeOptions() {
+  const options = [];
+  for (let minute = CONFIG.timeStepMinutes; minute < DAY_MINUTES; minute += CONFIG.timeStepMinutes) {
+    options.push(fromMinutes(minute));
+  }
+  options.push('00:00');
+  return options;
+}
+
+function timeComboHtml(name, value, label, placeholder) {
+  const id = `time-list-${name}`;
+  return `<span class="combo">
+    <input type="text" inputmode="numeric" maxlength="8" autocomplete="off" data-work="${name}" value="${escapeHtml(value)}"
+      placeholder="${escapeHtml(placeholder)}" aria-label="${escapeHtml(label)}"
+      role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${id}">
+    <button type="button" class="combo__toggle" tabindex="-1" aria-label="${escapeHtml(TEXTS.showOptions)}">▾</button>
+    <ul class="combo__list" id="${id}" role="listbox" hidden></ul>
+  </span>`;
+}
+
+// showAll: 눌러서 열었을 때는 전부, 입력 중에는 친 숫자로 시작하는 것만
+function openCombo(input, showAll) {
+  const list = input.parentElement.querySelector('.combo__list');
+  const digits = input.value.replace(/\D/g, '');
+  const options = timeOptions().filter((option) => showAll || option.replace(':', '').startsWith(digits));
+  const current = parseTime(input.value);
+  list.innerHTML = options
+    .map((option, i) => `<li id="${list.id}-${i}" role="option" aria-selected="${option === current}">${option}</li>`)
+    .join('');
+  list.hidden = options.length === 0;
+  input.setAttribute('aria-expanded', String(!list.hidden));
+  input.removeAttribute('aria-activedescendant');
+  // 지금 값(없으면 자주 쓰는 시각) 근처를 보여 준다.
+  const target = current || CONFIG.timeScrollTo;
+  const items = [...list.children];
+  const near = items.find((item) => item.textContent === target) || items.find((item) => item.textContent >= target);
+  if (showAll && near) {
+    list.scrollTop = near.offsetTop - list.clientHeight / 2 + near.offsetHeight / 2;
+  }
+}
+
+function closeCombo(input) {
+  input.parentElement.querySelector('.combo__list').hidden = true;
+  input.setAttribute('aria-expanded', 'false');
+  input.removeAttribute('aria-activedescendant');
+}
+
+function chooseOption(input, value) {
+  input.value = value;
+  closeCombo(input);
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function moveActiveOption(input, step) {
+  const list = input.parentElement.querySelector('.combo__list');
+  const items = [...list.children];
+  if (list.hidden || items.length === 0) {
+    openCombo(input, true);
+    return;
+  }
+  const current = items.findIndex((item) => item.id === input.getAttribute('aria-activedescendant'));
+  const next = items[(current + step + items.length) % items.length];
+  items.forEach((item) => item.classList.toggle('is-active', item === next));
+  input.setAttribute('aria-activedescendant', next.id);
+  next.scrollIntoView({ block: 'nearest' });
+}
+
+// 마우스: 누르는 순간(pointerdown) 고르고, 입력칸 포커스를 유지한다.
+// 터치: 손가락으로 목록을 넘길 수 있도록 탭(click)으로 고른다. ▾ 는 키보드 없이 목록만 연다.
+function setupCombos() {
+  const isCombo = (node) => node?.getAttribute?.('role') === 'combobox';
+  const isTouch = () => window.matchMedia('(pointer: coarse)').matches;
+  const comboInput = (node) => node.closest('.combo').querySelector('input');
+  const closeAll = (except) => {
+    document.querySelectorAll('.combo__list:not([hidden])').forEach((list) => {
+      const input = comboInput(list);
+      if (input !== except) {
+        closeCombo(input);
+      }
+    });
+  };
+  const toggleList = (input) => {
+    const list = input.parentElement.querySelector('.combo__list');
+    if (!list.hidden) {
+      closeCombo(input);
+      return;
+    }
+    closeAll(input);
+    if (!isTouch()) {
+      input.focus();
+    }
+    openCombo(input, true);
+    list.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  };
+
+  // 터치에서는 칸을 누르면 키보드가 목록을 가리므로, 칠 때 좁힌 후보만 보여 준다.
+  document.addEventListener('focusin', (event) => {
+    if (isCombo(event.target) && !isTouch()) {
+      openCombo(event.target, true);
+    }
+  });
+  document.addEventListener('focusout', (event) => {
+    if (isCombo(event.target)) {
+      closeCombo(event.target);
+    }
+  });
+  document.addEventListener('input', (event) => {
+    if (isCombo(event.target)) {
+      openCombo(event.target, false);
+    }
+  });
+  document.addEventListener('pointerdown', (event) => {
+    const option = event.target.closest('.combo__list [role="option"]');
+    const toggle = event.target.closest('.combo__toggle');
+    if (!option && !toggle) {
+      // 목록 밖을 누르면 닫는다 (터치에서 ▾ 로 연 목록은 포커스가 없어 focusout 이 없다).
+      if (!event.target.closest('.combo')) {
+        closeAll(null);
+      }
+      return;
+    }
+    if (event.pointerType === 'touch') {
+      return;
+    }
+    event.preventDefault();
+    if (option) {
+      chooseOption(comboInput(option), option.textContent);
+    } else {
+      toggleList(comboInput(toggle));
+    }
+  });
+  // 터치 탭 뒤에 오는 mousedown 이 입력칸 포커스를 빼앗아 목록을 닫지 않게 한다.
+  document.addEventListener('mousedown', (event) => {
+    if (event.target.closest('.combo__list, .combo__toggle')) {
+      event.preventDefault();
+    }
+  });
+  document.addEventListener('click', (event) => {
+    if (!isTouch()) {
+      return;
+    }
+    const option = event.target.closest('.combo__list [role="option"]');
+    const toggle = event.target.closest('.combo__toggle');
+    if (option) {
+      chooseOption(comboInput(option), option.textContent);
+    } else if (toggle) {
+      toggleList(comboInput(toggle));
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (!isCombo(event.target)) {
+      return;
+    }
+    const input = event.target;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      moveActiveOption(input, event.key === 'ArrowDown' ? 1 : -1);
+    } else if (event.key === 'Enter' && !event.isComposing) {
+      event.preventDefault();
+      const active = input.getAttribute('aria-activedescendant');
+      if (active) {
+        chooseOption(input, document.getElementById(active).textContent);
+      } else {
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    } else if (event.key === 'Escape') {
+      closeCombo(input);
+    }
+  });
+}
+
+// 그날 입력(백 또는 근무)이 있는 캐스트 id
+function enteredIds(key) {
+  return new Set([...Object.keys(state.data.days[key] || {}), ...Object.keys(state.data.works[key] || {})]);
+}
+
+function deleteCastDay(key, castId) {
+  delete state.data.days[key]?.[castId];
+  if (state.data.days[key] && Object.keys(state.data.days[key]).length === 0) {
+    delete state.data.days[key];
+  }
+  delete state.data.works[key]?.[castId];
+  if (state.data.works[key] && Object.keys(state.data.works[key]).length === 0) {
+    delete state.data.works[key];
+  }
+}
+
 // 설정의 품목 순서대로
 function orderedEntries(entries) {
   const order = new Map(state.data.items.map((item, index) => [item.id, index]));
@@ -347,7 +747,7 @@ function castByName(name) {
   if (found) {
     return found;
   }
-  const cast = { id: newId('cast'), name, member: false };
+  const cast = { id: newId('cast'), name, member: false, rate: 0, nightRate: 0 };
   state.data.casts.push(cast);
   return cast;
 }
@@ -356,14 +756,14 @@ function castByName(name) {
 // 그날 입력이 있는 사람은 항상 들어간다 (명세와 목록이 어긋나지 않도록).
 function dayCasts(key) {
   const roster = state.data.rosters[key] || { added: [], hidden: [] };
-  const entered = state.data.days[key] || {};
+  const entered = enteredIds(key);
   const ids = [
     ...state.data.casts.filter((cast) => cast.member).map((cast) => cast.id),
     ...roster.added,
-    ...Object.keys(entered),
+    ...entered,
   ];
   return [...new Set(ids)]
-    .filter((id) => id in entered || !roster.hidden.includes(id))
+    .filter((id) => entered.has(id) || !roster.hidden.includes(id))
     .map(castById)
     .filter(Boolean);
 }
@@ -390,14 +790,12 @@ function addToDay(name) {
 
 function removeFromDay() {
   const castId = state.castId;
-  const total = sumEntries(entriesOf(state.date, castId));
-  if (total && !confirm(TEXTS.confirmRemoveFromDay(castName(castId), dateLabel(state.date), TEXTS.yen(total)))) {
+  const total = castDayTotal(state.date, castId);
+  const hasInput = enteredIds(state.date).has(castId);
+  if (hasInput && !confirm(TEXTS.confirmRemoveFromDay(castName(castId), dateLabel(state.date), TEXTS.yen(total)))) {
     return;
   }
-  delete state.data.days[state.date]?.[castId];
-  if (state.data.days[state.date] && Object.keys(state.data.days[state.date]).length === 0) {
-    delete state.data.days[state.date];
-  }
+  deleteCastDay(state.date, castId);
   updateRoster(state.date, castId, false);
   saveData();
   renderEntry();
@@ -443,7 +841,7 @@ function renderEntry() {
   const candidates = [...new Set(state.data.casts.filter((cast) => !shownIds.has(cast.id)).map((cast) => cast.name.trim()).filter(Boolean))];
   document.getElementById('cast-picker').innerHTML = casts
     .map((cast) => {
-      const total = sumEntries(entriesOf(key, cast.id));
+      const total = castDayTotal(key, cast.id);
       return `<button type="button" class="chip" role="radio" aria-checked="${cast.id === state.castId}" data-action="pick-cast" data-cast="${escapeHtml(cast.id)}">
         <span>${escapeHtml(cast.name || TEXTS.newCast)}</span>
         ${total ? `<span class="chip__total">${escapeHtml(TEXTS.yen(total))}</span>` : ''}
@@ -493,39 +891,107 @@ function renderEntryItems() {
       <span class="entry-row__amount">${count ? escapeHtml(TEXTS.yen(entryAmount(entry))) : ''}</span>
     </div>`;
   });
-  const total = sumEntries(entries);
+  const back = sumEntries(entries);
+  const wage = workPay(state.date, cast.id);
   node.innerHTML = `
+    ${workHtml(cast)}
     <div class="entry-items">${rows.join('')}</div>
     <div class="entry-total">
-      <span>${escapeHtml(TEXTS.castDayTotal(cast.name))}</span>
-      <strong>${escapeHtml(TEXTS.yen(total))}</strong>
+      <span>${escapeHtml(TEXTS.castDayTotal(cast.name))}<small>${escapeHtml(TEXTS.castDayBreakdown(TEXTS.yen(wage), TEXTS.yen(back)))}</small></span>
+      <strong>${escapeHtml(TEXTS.yen(wage + back))}</strong>
     </div>
     <div class="entry-links">
-      <button type="button" class="link-button" data-action="clear-cast-day" ${total ? '' : 'disabled'}>${escapeHtml(TEXTS.clearCastDay)}</button>
+      <button type="button" class="link-button" data-action="clear-cast-day" ${enteredIds(state.date).has(cast.id) ? '' : 'disabled'}>${escapeHtml(TEXTS.clearCastDay)}</button>
       <button type="button" class="link-button" data-action="remove-from-day">${escapeHtml(TEXTS.removeFromDay)}</button>
     </div>`;
 }
 
+// 입력 화면 맨 위의 출근〜퇴근 칸과 그날의 시급
+function workHtml(cast) {
+  const work = workOf(state.date, cast.id);
+  const draft = state.workDraft?.key === state.date && state.workDraft.castId === cast.id ? state.workDraft : null;
+  const setting = wageSnapshot(cast.id);
+  const shown = work || { ...setting, ...(draft && { rate: draft.rate, nightRate: draft.nightRate }) };
+  const result = work ? workResult(work) : null;
+  const info = [TEXTS.nightRange(shown.nightStart, shown.nightEnd), TEXTS.timeUnit(shown.unit)];
+  if (result) {
+    info.unshift(result.night ? TEXTS.hoursWithNight(TEXTS.hours(result.minutes), TEXTS.hours(result.night)) : TEXTS.hours(result.minutes));
+  }
+  const notes = [];
+  if (!shown.rate) {
+    notes.push(`<small class="work__warn">${escapeHtml(TEXTS.noRate)}</small>`);
+  }
+  if (shown.rate && nightRateOf(shown) < shown.rate) {
+    notes.push(`<small class="work__warn">${escapeHtml(TEXTS.nightBelowBase)}</small>`);
+  }
+  if (draft) {
+    notes.push(`<small class="work__warn">${escapeHtml(draft.invalid ? TEXTS.timeInvalid : TEXTS.workTimeOnlyOne)}</small>`);
+  }
+  if (work && isStaleWork(work, cast.id)) {
+    notes.push(`<button type="button" class="link-button" data-action="refresh-rate">${escapeHtml(TEXTS.refreshRate)}</button>`);
+  }
+  const rateInput = (name, value, label) => `<label class="yen-input">
+      <span>${escapeHtml(label)}</span>
+      <input type="number" inputmode="numeric" min="0" step="10" data-work="${name}" value="${value || ''}" placeholder="${escapeHtml(TEXTS.castRatePlaceholder)}" aria-label="${escapeHtml(TEXTS.dayRateLabel(label))}">
+      <span>円</span>
+    </label>`;
+  return `<div class="work${work ? ' is-active' : ''}">
+    <span class="work__label">${escapeHtml(TEXTS.work)}</span>
+    <span class="work__times">
+      ${timeComboHtml('start', work?.start ?? draft?.start ?? '', TEXTS.workStart, TEXTS.workStartPlaceholder)}
+      <span>${escapeHtml(TEXTS.workSep)}</span>
+      ${timeComboHtml('end', work?.end ?? draft?.end ?? '', TEXTS.workEnd, TEXTS.workEndPlaceholder)}
+    </span>
+    <span class="entry-row__amount">${result ? escapeHtml(TEXTS.yen(result.pay)) : ''}</span>
+    <span class="work__rates">
+      ${rateInput('rate', shown.rate, TEXTS.dayRate)}
+      ${rateInput('nightRate', shown.nightRate, TEXTS.dayNightRate)}
+    </span>
+    <small class="work__info">${escapeHtml(info.join(' ・ '))}</small>
+    ${notes.join('')}
+  </div>`;
+}
+
 function renderDayOverview() {
   const node = document.getElementById('day-overview');
-  const casts = state.data.days[state.date] || {};
+  const key = state.date;
+  const entered = enteredIds(key);
+  let wageTotal = 0;
+  let backTotal = 0;
   const rows = state.data.casts
-    .filter((cast) => cast.id in casts)
+    .filter((cast) => entered.has(cast.id))
     .map((cast) => {
-      const entries = casts[cast.id];
+      const entries = entriesOf(key, cast.id);
+      const work = workOf(key, cast.id);
       const drinks = drinkCount(entries);
+      const wage = workPay(key, cast.id);
+      const back = sumEntries(entries);
+      wageTotal += wage;
+      backTotal += back;
+      const notes = [work ? TEXTS.hours(workResult(work).minutes) : '', drinks ? TEXTS.cups(drinks) : ''].filter(Boolean).join(' ・ ');
       return `<tr>
-        <th scope="row">${escapeHtml(cast.name)}</th>
-        <td>${drinks ? escapeHtml(TEXTS.cups(drinks)) : ''}</td>
-        <td>${escapeHtml(TEXTS.yen(sumEntries(entries)))}</td>
+        <th scope="row">${escapeHtml(cast.name)}${notes ? `<small>${escapeHtml(notes)}</small>` : ''}</th>
+        <td>${work ? escapeHtml(TEXTS.yen(wage)) : ''}</td>
+        <td>${escapeHtml(TEXTS.yen(back))}</td>
+        <td>${escapeHtml(TEXTS.yen(wage + back))}</td>
       </tr>`;
     });
-  const total = Object.values(casts).reduce((sum, entries) => sum + sumEntries(entries), 0);
   node.innerHTML = `<h2>${escapeHtml(TEXTS.dayOverview)}</h2>` + (rows.length === 0
     ? `<p class="empty">${escapeHtml(TEXTS.dayOverviewEmpty)}</p>`
     : `<table class="table">
+        <thead><tr>
+          <th scope="col">${escapeHtml(TEXTS.colCast)}</th>
+          <th scope="col">${escapeHtml(TEXTS.colWage)}</th>
+          <th scope="col">${escapeHtml(TEXTS.colBack)}</th>
+          <th scope="col">${escapeHtml(TEXTS.colTotal)}</th>
+        </tr></thead>
         <tbody>${rows.join('')}</tbody>
-        <tfoot><tr><th scope="row">${escapeHtml(TEXTS.dayTotal)}</th><td></td><td>${escapeHtml(TEXTS.yen(total))}</td></tr></tfoot>
+        <tfoot><tr>
+          <th scope="row">${escapeHtml(TEXTS.dayTotal)}</th>
+          <td>${escapeHtml(TEXTS.yen(wageTotal))}</td>
+          <td>${escapeHtml(TEXTS.yen(backTotal))}</td>
+          <td>${escapeHtml(TEXTS.yen(wageTotal + backTotal))}</td>
+        </tr></tfoot>
       </table>`);
 }
 
@@ -548,10 +1014,8 @@ function clearCastDay() {
   if (!confirm(TEXTS.confirmClearCastDay(name, dateLabel(state.date)))) {
     return;
   }
-  delete state.data.days[state.date]?.[state.castId];
-  if (state.data.days[state.date] && Object.keys(state.data.days[state.date]).length === 0) {
-    delete state.data.days[state.date];
-  }
+  deleteCastDay(state.date, state.castId);
+  state.workDraft = null;
   saveData();
   renderEntry();
 }
@@ -567,15 +1031,24 @@ function moveDate(key) {
 
 // 기간 안의 한 캐스트 합계
 function castReport(castId) {
-  const report = { castId, back: 0, drinks: 0, days: [], items: new Map() };
-  const keys = Object.keys(state.data.days).filter((key) => key >= state.from && key <= state.to).sort();
+  const report = { castId, back: 0, wage: 0, total: 0, minutes: 0, night: 0, drinks: 0, days: [], items: new Map() };
+  const keys = [...new Set([...Object.keys(state.data.days), ...Object.keys(state.data.works)])]
+    .filter((key) => key >= state.from && key <= state.to)
+    .sort();
   for (const key of keys) {
-    const entries = state.data.days[key][castId];
-    if (!entries) {
+    const entries = state.data.days[key]?.[castId];
+    const work = workOf(key, castId);
+    if (!entries && !work) {
       continue;
     }
-    const lines = orderedEntries(entries);
-    let subtotal = 0;
+    const lines = orderedEntries(entries || {});
+    const result = work ? workResult(work) : null;
+    if (result) {
+      report.wage += result.pay;
+      report.minutes += result.minutes;
+      report.night += result.night;
+    }
+    let subtotal = result?.pay || 0;
     for (const [itemId, entry] of lines) {
       const amount = entryAmount(entry);
       subtotal += amount;
@@ -587,9 +1060,10 @@ function castReport(castId) {
       sum.amount += amount;
       report.items.set(itemId, sum);
     }
-    report.back += subtotal;
-    report.days.push({ key, lines, subtotal });
+    report.back += subtotal - (result?.pay || 0);
+    report.days.push({ key, lines, work, result, subtotal });
   }
+  report.total = report.wage + report.back;
   return report;
 }
 
@@ -626,30 +1100,41 @@ function renderSummary() {
     ? `<p class="empty">${escapeHtml(TEXTS.summaryEmpty)}</p>`
     : `<div class="stats">
         <div class="stat"><span>${escapeHtml(TEXTS.storeDrinks)}</span><strong>${escapeHtml(TEXTS.cups(total('drinks')))}</strong></div>
+        <div class="stat"><span>${escapeHtml(TEXTS.storeWage)}</span><strong>${escapeHtml(TEXTS.yen(total('wage')))}</strong></div>
         <div class="stat"><span>${escapeHtml(TEXTS.storeBack)}</span><strong>${escapeHtml(TEXTS.yen(total('back')))}</strong></div>
+        <div class="stat"><span>${escapeHtml(TEXTS.storeTotal)}</span><strong>${escapeHtml(TEXTS.yen(total('total')))}</strong></div>
       </div>
-      <table class="table">
+      <div class="table-scroll"><table class="table">
         <thead><tr>
           <th scope="col">${escapeHtml(TEXTS.colCast)}</th>
           <th scope="col">${escapeHtml(TEXTS.colDays)}</th>
+          <th scope="col">${escapeHtml(TEXTS.colHours)}</th>
           <th scope="col">${escapeHtml(TEXTS.colDrinks)}</th>
+          <th scope="col">${escapeHtml(TEXTS.colWage)}</th>
           <th scope="col">${escapeHtml(TEXTS.colBack)}</th>
+          <th scope="col">${escapeHtml(TEXTS.colTotal)}</th>
         </tr></thead>
         <tbody>${reports
           .map((report) => `<tr>
             <th scope="row"><button type="button" class="link-button" data-action="open-receipt" data-cast="${escapeHtml(report.castId)}" aria-label="${escapeHtml(TEXTS.openReceipt(castName(report.castId)))}">${escapeHtml(castName(report.castId))}</button></th>
             <td>${escapeHtml(TEXTS.days(report.days.length))}</td>
+            <td>${report.minutes ? escapeHtml(TEXTS.hours(report.minutes)) : ''}</td>
             <td>${escapeHtml(TEXTS.cups(report.drinks))}</td>
+            <td>${escapeHtml(TEXTS.yen(report.wage))}</td>
             <td>${escapeHtml(TEXTS.yen(report.back))}</td>
+            <td>${escapeHtml(TEXTS.yen(report.total))}</td>
           </tr>`)
           .join('')}</tbody>
         <tfoot><tr>
           <th scope="row">${escapeHtml(TEXTS.totalRow)}</th>
           <td></td>
+          <td>${escapeHtml(TEXTS.hours(total('minutes')))}</td>
           <td>${escapeHtml(TEXTS.cups(total('drinks')))}</td>
+          <td>${escapeHtml(TEXTS.yen(total('wage')))}</td>
           <td>${escapeHtml(TEXTS.yen(total('back')))}</td>
+          <td>${escapeHtml(TEXTS.yen(total('total')))}</td>
         </tr></tfoot>
-      </table>`;
+      </table></div>`;
 
   if (state.receiptCast !== 'all' && !reports.some((report) => report.castId === state.receiptCast)) {
     state.receiptCast = 'all';
@@ -676,25 +1161,40 @@ function receiptRows(report) {
   const number = (amount) => amount.toLocaleString('ja-JP');
   const now = new Date();
   const issued = `${fullDate(toKey(now))} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  // 근무 기록이 없는 기간은 예전처럼 백 명세만
+  const hasWork = report.days.some((day) => day.work);
+  const itemRows = orderedEntries(Object.fromEntries(report.items));
   return [
     { type: 'store', label: TEXTS.storeName },
-    { type: 'title', label: TEXTS.receiptTitle },
+    { type: 'title', label: hasWork ? TEXTS.receiptTitleWage : TEXTS.receiptTitle },
     { type: 'line', label: TEXTS.receiptPeriod, value: `${fullDate(state.from)} ${TEXTS.periodSep} ${fullDate(state.to)}` },
     { type: 'cast', label: TEXTS.receiptCast, value: castName(report.castId) },
     { type: 'hr' },
     { type: 'heading', label: TEXTS.receiptDays },
     ...report.days.flatMap((day) => [
       { type: 'date', label: shortDate(day.key) },
+      ...(day.work ? [{ type: 'dayLine', label: TEXTS.receiptWorkLine(day.work.start, day.work.end, TEXTS.hours(day.result.minutes)), value: number(day.result.pay) }] : []),
       ...day.lines.map(([itemId, entry]) => ({ type: 'dayLine', label: lineLabel(itemId, entry.n), value: number(entryAmount(entry)) })),
       { type: 'sub', label: TEXTS.receiptSubtotal, value: number(day.subtotal) },
     ]),
+    ...(itemRows.length ? [
+      { type: 'hr' },
+      { type: 'heading', label: TEXTS.receiptItems },
+      ...itemRows.map(([itemId, sum]) => ({ type: 'line', label: lineLabel(itemId, sum.n), value: number(sum.amount) })),
+    ] : []),
     { type: 'hr' },
-    { type: 'heading', label: TEXTS.receiptItems },
-    ...orderedEntries(Object.fromEntries(report.items)).map(([itemId, sum]) => ({ type: 'line', label: lineLabel(itemId, sum.n), value: number(sum.amount) })),
-    { type: 'hr' },
+    ...(hasWork ? [
+      { type: 'line', label: TEXTS.receiptHours, value: TEXTS.hours(report.minutes) },
+      ...(report.night ? [{ type: 'line', label: TEXTS.receiptNightHours, value: TEXTS.hours(report.night) }] : []),
+    ] : []),
     { type: 'line', label: TEXTS.receiptDrinks, value: TEXTS.cups(report.drinks) },
     { type: 'line', label: TEXTS.receiptInputDays, value: TEXTS.days(report.days.length) },
-    { type: 'total', label: TEXTS.receiptTotal, value: `¥${number(report.back)}` },
+    ...(hasWork ? [
+      { type: 'hr' },
+      { type: 'line', label: TEXTS.receiptWage, value: number(report.wage) },
+      { type: 'line', label: TEXTS.receiptTotal, value: number(report.back) },
+    ] : []),
+    { type: 'total', label: hasWork ? TEXTS.receiptGrandTotal : TEXTS.receiptTotal, value: `¥${number(report.total)}` },
     { type: 'issued', label: TEXTS.receiptIssued(issued) },
   ];
 }
@@ -874,17 +1374,22 @@ function exportCsv() {
   const reports = periodReports();
   const usedIds = new Set(reports.flatMap((report) => [...report.items.keys()]));
   const items = state.data.items.filter((item) => usedIds.has(item.id));
-  const header = [TEXTS.colCast, TEXTS.colDays, TEXTS.receiptDrinks, ...items.map((item) => item.name), TEXTS.receiptTotal];
+  const header = [TEXTS.colCast, TEXTS.colDays, TEXTS.csvHours, TEXTS.csvNightHours, TEXTS.receiptDrinks, ...items.map((item) => item.name), TEXTS.receiptWage, TEXTS.receiptTotal, TEXTS.receiptGrandTotal];
   // 품목 칸: 개수로 센 품목은 개수, 금액을 직접 넣은 품목은 금액
+  // 근무 시간은 엑셀에서 계산하기 쉽도록 소수 (5時間30分 → 5.5)
   const rows = reports.map((report) => [
     castName(report.castId),
     report.days.length,
+    Math.round((report.minutes / 60) * 100) / 100,
+    Math.round((report.night / 60) * 100) / 100,
     report.drinks,
     ...items.map((item) => {
       const sum = report.items.get(item.id);
       return sum ? sum.n || sum.amount : 0;
     }),
+    report.wage,
     report.back,
+    report.total,
   ]);
   const cell = (value) => `"${String(value).replaceAll('"', '""')}"`;
   const csv = [[`${TEXTS.periodLabel} ${fullDate(state.from)}${TEXTS.periodSep}${fullDate(state.to)}`], header, ...rows]
@@ -926,14 +1431,45 @@ function settingRows(kind, list, fields) {
     .join('');
 }
 
+// 이름 붙은 금액 칸. 휴대폰에서는 이름 아래 줄에 나란히 놓인다.
+//   auto: 직접 넣지 않았을 때(value 0) 대신 보여 줄 공통 금액. 회색(is-auto)으로 보여 준다.
+function amountInput(kind, field, index, value, label, ariaLabel, placeholder, auto = 0) {
+  const isAuto = !value && auto > 0;
+  return `<label class="yen-input">
+    <span class="yen-input__label">${escapeHtml(label)}</span>
+    <input type="number" inputmode="numeric" min="0" step="10" data-kind="${kind}" data-field="${field}" data-index="${index}" value="${value || auto || ''}"
+      class="${isAuto ? 'is-auto' : ''}" ${isAuto ? `title="${escapeHtml(TEXTS.castRateAuto)}"` : ''} placeholder="${escapeHtml(placeholder)}" aria-label="${escapeHtml(ariaLabel)}">
+    <span>円</span>
+  </label>`;
+}
+
+// 기본 멤버의 시급 칸 중 직접 넣지 않은 칸에 공통 시급을 다시 채운다. 쓰고 있는 칸은 건드리지 않는다.
+function refreshAutoRates() {
+  const auto = { rate: state.data.wage.base, nightRate: state.data.wage.nightRate };
+  document.querySelectorAll('#cast-list [data-field="rate"], #cast-list [data-field="nightRate"]').forEach((input) => {
+    const cast = state.data.casts[Number(input.dataset.index)];
+    if (!cast || cast[input.dataset.field] || input === document.activeElement) {
+      return;
+    }
+    const value = auto[input.dataset.field];
+    input.value = value || '';
+    input.classList.toggle('is-auto', value > 0);
+    input.title = value > 0 ? TEXTS.castRateAuto : '';
+  });
+}
+
 function renderSettings() {
   document.getElementById('cast-list').innerHTML = settingRows('cast', state.data.casts, (cast, index) =>
-    `<input type="text" maxlength="20" data-kind="cast" data-field="name" data-index="${index}" value="${escapeHtml(cast.name)}" placeholder="${escapeHtml(TEXTS.castPlaceholder)}">`);
+    `<input type="text" maxlength="20" data-kind="cast" data-field="name" data-index="${index}" value="${escapeHtml(cast.name)}" placeholder="${escapeHtml(TEXTS.castPlaceholder)}">
+    <span class="setting-row__amounts">
+      ${amountInput('cast', 'rate', index, cast.rate, TEXTS.castRate, TEXTS.castRateLabel, TEXTS.castRatePlaceholder, state.data.wage.base)}
+      ${amountInput('cast', 'nightRate', index, cast.nightRate, TEXTS.castNight, TEXTS.castNightLabel, TEXTS.castRatePlaceholder, state.data.wage.nightRate)}
+    </span>`);
+  renderWageSettings();
   document.getElementById('item-list').innerHTML = settingRows('item', state.data.items, (item, index) =>
     `<input type="text" maxlength="30" data-kind="item" data-field="name" data-index="${index}" value="${escapeHtml(item.name)}" placeholder="${escapeHtml(TEXTS.itemPlaceholder)}">
-    <span class="yen-input">
-      <input type="number" inputmode="numeric" min="0" step="10" data-kind="item" data-field="back" data-index="${index}" value="${item.back || ''}" placeholder="${escapeHtml(TEXTS.backPlaceholder)}" aria-label="${escapeHtml(TEXTS.backLabel)}">
-      <span>円</span>
+    <span class="setting-row__amounts">
+      ${amountInput('item', 'back', index, item.back, TEXTS.backShort, TEXTS.backLabel, TEXTS.backPlaceholder)}
     </span>`);
 }
 
@@ -943,8 +1479,22 @@ function handleSettingInput(event) {
   if (!row) {
     return;
   }
-  row[field] = field === 'back' ? toAmount(event.target.value) : event.target.value;
+  row[field] = ['back', 'rate', 'nightRate'].includes(field) ? toAmount(event.target.value) : event.target.value;
+  // 쓰기 시작하면 직접 넣은 시급 (회색 표시를 없앤다)
+  event.target.classList.remove('is-auto');
+  event.target.title = '';
   saveData();
+}
+
+function renderWageSettings() {
+  document.getElementById('wage-base').value = state.data.wage.base || '';
+  document.getElementById('wage-night').value = state.data.wage.nightRate || '';
+}
+
+function handleWageInput(event) {
+  state.data.wage[event.target.dataset.wage] = toAmount(event.target.value);
+  saveData();
+  refreshAutoRates();
 }
 
 // 설정 화면에 없는 행은 건너뛰고, 보이는 바로 위·아래 행과 자리를 바꾼다.
@@ -1045,7 +1595,7 @@ async function importData(file) {
     setStatus(TEXTS.importInvalid, true);
     return;
   }
-  const dayCount = Object.keys(imported.days).length;
+  const dayCount = new Set([...Object.keys(imported.days), ...Object.keys(imported.works)]).size;
   if (dayCount === 0 && imported.casts.length === 0 && imported.items.length === 0) {
     setStatus(TEXTS.importEmpty, true);
     return;
@@ -1057,6 +1607,10 @@ async function importData(file) {
   state.data.items = mergeById(state.data.items, imported.items);
   Object.assign(state.data.days, imported.days);
   Object.assign(state.data.rosters, imported.rosters);
+  Object.assign(state.data.works, imported.works);
+  if (imported.wage) {
+    state.data.wage = imported.wage;
+  }
   // id 가 달라도 이름이 같으면 같은 사람이다 (다른 기기에서 따로 추가한 경우 등).
   mergeSameNameCasts(state.data);
   if (saveData()) {
@@ -1092,6 +1646,7 @@ function handleAction(button) {
     minus: () => changeCount(item, -1),
     plus: () => changeCount(item, 1),
     'clear-cast-day': clearCastDay,
+    'refresh-rate': refreshWorkRate,
     'remove-from-day': removeFromDay,
     'day-add': () => addToDay(document.getElementById('day-add-name').value),
     'this-month': () => setPeriod(...monthRange(0)),
@@ -1101,7 +1656,7 @@ function handleAction(button) {
       renderSummary();
       document.getElementById('receipts').scrollIntoView({ behavior: 'smooth', block: 'start' });
     },
-    'add-cast': () => addRow('cast', { id: newId('cast'), name: '', member: true }),
+    'add-cast': () => addRow('cast', { id: newId('cast'), name: '', member: true, rate: 0, nightRate: 0 }),
     'add-item': () => addRow('item', { id: newId('item'), name: '', back: 0, removed: false }),
     'cast-up': () => moveRow(state.data.casts, index, -1),
     'cast-down': () => moveRow(state.data.casts, index, 1),
@@ -1128,6 +1683,12 @@ function init() {
   [state.from, state.to] = monthRange(0);
   renderTabs();
   selectView('entry');
+  setupCombos();
+
+  // 휴대폰에서 입력하는 동안 아래 버튼 줄을 숨긴다 (style.css 의 is-typing). 키보드 위 공간이 좁기 때문.
+  const isTyping = () => document.activeElement?.matches('input:not([type="date"]):not([type="file"]), select, textarea');
+  document.addEventListener('focusin', () => document.body.classList.toggle('is-typing', isTyping()));
+  document.addEventListener('focusout', () => setTimeout(() => document.body.classList.toggle('is-typing', isTyping())));
 
   document.getElementById('view-tabs').addEventListener('click', (event) => {
     const tab = event.target.closest('[data-view]');
@@ -1152,6 +1713,8 @@ function init() {
   document.getElementById('entry-items').addEventListener('change', (event) => {
     if (event.target.dataset.manual) {
       setManual(event.target.dataset.manual, event.target.value);
+    } else if (event.target.dataset.work) {
+      changeWorkTime();
     }
   });
 
@@ -1166,11 +1729,25 @@ function init() {
   document.getElementById('view-settings').addEventListener('input', (event) => {
     if (event.target.dataset.kind) {
       handleSettingInput(event);
+    } else if (event.target.dataset.wage) {
+      handleWageInput(event);
     }
   });
   document.getElementById('view-settings').addEventListener('change', (event) => {
-    if (event.target.dataset.kind === 'cast') {
+    if (event.target.dataset.kind === 'cast' && event.target.dataset.field === 'name') {
       mergeCastsAfterRename();
+    }
+  });
+  // 비운 시급 칸은 칸을 떠날 때 공통 시급으로 다시 채운다.
+  document.getElementById('view-settings').addEventListener('focusout', (event) => {
+    if (event.target.dataset.kind === 'cast' && ['rate', 'nightRate'].includes(event.target.dataset.field)) {
+      setTimeout(refreshAutoRates);
+    }
+  });
+  // 자동으로 들어간 시급 칸을 누르면 전체를 골라, 치는 대로 바꿔 쓰이게 한다.
+  document.getElementById('view-settings').addEventListener('focusin', (event) => {
+    if (event.target.classList.contains('is-auto')) {
+      event.target.select();
     }
   });
 

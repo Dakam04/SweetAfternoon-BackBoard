@@ -56,6 +56,7 @@ button.primary {
 input[type="text"],
 input[type="number"],
 input[type="date"],
+input[type="time"],
 select {
   min-width: 0;
   min-height: 40px;
@@ -313,6 +314,131 @@ select:focus {
   text-align: right;
 }
 
+/* 출근〜퇴근 */
+/* 1줄: 勤務 + 금액 / 2줄: 출근〜퇴근 / 3줄: 시급 안내 */
+.work {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 10px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  background: var(--soft);
+  border-radius: 8px;
+}
+
+.work__label {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.work__times {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 22em;
+  color: var(--muted);
+}
+
+/* 그날의 시급·심야 시급 */
+.work__rates {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.work__rates .yen-input > span {
+  white-space: nowrap;
+}
+
+.work__rates input {
+  width: 6.5em;
+  min-height: 36px;
+  padding: 5px 8px;
+}
+
+/* 시각 입력 (직접 입력 + 후보 목록) */
+
+.combo {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.combo input {
+  width: 100%;
+  padding-right: 32px;
+  font-variant-numeric: tabular-nums;
+}
+
+.combo__toggle {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  width: 32px;
+  height: 100%;
+  padding: 0;
+  font-size: 13px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 0 8px 8px 0;
+}
+
+.combo__list {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgb(44 76 133 / 0.12);
+}
+
+.combo__list li {
+  padding: 9px 12px;
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.combo__list li:hover,
+.combo__list li.is-active,
+.combo__list li[aria-selected="true"] {
+  color: var(--ink);
+  background: var(--soft);
+}
+
+.work small,
+.work .link-button {
+  grid-column: 1 / -1;
+  justify-self: start;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.work .link-button {
+  padding: 0;
+  font-size: 13px;
+  color: var(--blue-ink);
+}
+
+.work small.work__warn {
+  color: var(--pink-ink);
+}
+
 .counter {
   display: inline-flex;
   align-items: center;
@@ -344,6 +470,13 @@ select:focus {
   padding: 12px 14px;
   background: var(--soft);
   border-radius: 8px;
+}
+
+.entry-total small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .entry-total strong {
@@ -380,6 +513,28 @@ select:focus {
 .table th:first-child {
   text-align: left;
   font-weight: 400;
+}
+
+.table th small {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.table-scroll .table {
+  white-space: nowrap;
+}
+
+.table-scroll th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #fff;
+  box-shadow: 1px 0 0 var(--soft);
 }
 
 .table thead th {
@@ -564,8 +719,58 @@ select:focus {
   margin-bottom: 6px;
 }
 
-.setting-row--item {
-  grid-template-columns: minmax(0, 1fr) 8.5em repeat(3, 34px);
+.setting-row--item,
+.setting-row--cast {
+  grid-template-columns: minmax(0, 1fr) auto repeat(3, 34px);
+}
+
+/* 금액 칸 묶음. 기본 멤버는 時給·深夜 를 세로로 쌓는다. */
+.setting-row__amounts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.setting-row__amounts .yen-input input {
+  width: 6.5em;
+}
+
+.yen-input__label {
+  min-width: 2.2em;
+  white-space: nowrap;
+}
+
+/* 품목은 PC 에서 열 제목 없이도 알 수 있으므로 「バック」 글자를 숨긴다. */
+.setting-row--item .yen-input__label {
+  display: none;
+}
+
+/* 공통 시급에서 자동으로 들어간 금액 */
+.yen-input input.is-auto {
+  color: var(--muted);
+  background: var(--soft);
+}
+
+.settings__col {
+  display: grid;
+  gap: 16px;
+}
+
+.card h3 {
+  margin: 16px 0 6px;
+  font-size: 15px;
+  color: var(--blue-ink);
+}
+
+.wage-base {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 9.5em;
+  align-items: center;
+  gap: 8px;
+}
+
+.wage-base + .wage-base {
+  margin-top: 8px;
 }
 
 .yen-input {
@@ -690,6 +895,56 @@ select:focus {
   textarea {
     font-size: 16px !important;
   }
+
+  /* 손가락으로 누르기 쉽도록 44px 이상 */
+  button,
+  input[type="text"],
+  input[type="number"],
+  input[type="date"],
+  select,
+  .view-tabs__tab,
+  .add,
+  .work__rates input,
+  .day-add input,
+  .day-add button {
+    min-height: 44px;
+  }
+
+  .icon-button,
+  .counter button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .combo input {
+    padding-right: 44px;
+  }
+
+  .combo__toggle {
+    width: 44px;
+  }
+
+  .combo__list li {
+    padding: 12px 14px;
+  }
+
+  .link-button,
+  .entry-links .link-button,
+  .work .link-button {
+    min-height: 44px;
+    padding: 0 2px;
+  }
+
+  .table .link-button {
+    min-width: 44px;
+    min-height: 44px;
+    text-align: left;
+  }
+
+  /* 입력하는 동안 아래 버튼 줄을 숨겨 키보드 위 공간을 넓힌다 */
+  body.is-typing .actions {
+    display: none;
+  }
 }
 
 /* ---------- 휴대폰·태블릿 세로 ---------- */
@@ -713,10 +968,11 @@ select:focus {
     padding: 12px 12px 150px;
   }
 
+  /* minmax(0, …): 넓은 표가 화면을 밀어내지 않고 카드 안에서 옆으로 넘기게 */
   .entry,
   .summary,
   .settings {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .entry-items {
@@ -744,8 +1000,54 @@ select:focus {
     grid-template-columns: minmax(0, 1fr) auto 5.5em;
   }
 
-  .setting-row--item {
-    grid-template-columns: minmax(0, 1fr) 6.5em repeat(3, 34px);
+  .setting-row--item,
+  .setting-row--cast {
+    grid-template-columns: minmax(0, 1fr) repeat(3, auto);
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--soft);
+  }
+
+  .setting-row__amounts {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+  }
+
+  .setting-row--item .yen-input__label {
+    display: inline;
+  }
+
+  .setting-row__amounts .yen-input input {
+    width: 5.5em;
+  }
+
+  .wage-base {
+    grid-template-columns: minmax(0, 1fr) 8.5em;
+  }
+
+  .entry-total strong {
+    font-size: 20px;
+  }
+
+}
+
+/* 아주 좁은 휴대폰 (iPhone SE 등 320px): 여백을 줄여 이름 칸을 넓힌다 */
+@media (max-width: 360px) {
+  .card {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .setting-row--item,
+  .setting-row--cast {
+    gap: 4px;
+  }
+
+  .setting-row .icon-button {
+    width: 40px;
   }
 }
 
