@@ -575,6 +575,36 @@ select:focus {
   border-bottom: 0;
 }
 
+/* ---------- 매상 ---------- */
+
+.sales {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.sales__col {
+  display: grid;
+  gap: 16px;
+}
+
+.sales__stats {
+  margin: 14px 0 0;
+}
+
+.stat small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.table tr.is-current th,
+.table tr.is-current td {
+  background: var(--soft);
+}
+
 /* ---------- 집계・명세 ---------- */
 
 .summary {
@@ -1002,6 +1032,7 @@ select:focus {
 
   /* minmax(0, …): 넓은 표가 화면을 밀어내지 않고 카드 안에서 옆으로 넘기게 */
   .entry,
+  .sales,
   .summary,
   .settings {
     grid-template-columns: minmax(0, 1fr);
@@ -1101,6 +1132,7 @@ select:focus {
   .receipt-controls,
   .receipt-save,
   #view-entry,
+  #view-sales,
   #view-settings,
   #summary,
   dialog {

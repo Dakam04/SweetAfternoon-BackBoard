@@ -44,6 +44,60 @@
       </div>
     </section>
 
+    <!-- 매상: 날마다 손님 수·매상(가게/원격), 그달의 목표 매상과 달성률 -->
+    <section class="view" id="view-sales" role="tabpanel" hidden>
+      <div class="pager">
+        <button type="button" class="pager__step" data-action="prev-day" data-text-label="prevDay">‹</button>
+        <label class="pager__label">
+          <span id="sales-date-label"></span>
+          <input type="date" id="sales-date">
+        </label>
+        <button type="button" class="pager__step" data-action="next-day" data-text-label="nextDay">›</button>
+        <button type="button" data-action="today" data-text="today"></button>
+      </div>
+      <div class="sales">
+        <div class="sales__col">
+          <div class="card">
+            <h2 id="sales-day-title"></h2>
+            <label class="wage-base">
+              <span data-text="salesGuests"></span>
+              <span class="yen-input">
+                <input type="number" inputmode="numeric" min="0" step="1" id="sales-guests" data-sales="guests">
+                <span data-text="peopleUnit"></span>
+              </span>
+            </label>
+            <label class="wage-base">
+              <span data-text="salesStore"></span>
+              <span class="yen-input">
+                <input type="number" inputmode="numeric" min="0" step="100" id="sales-store" data-sales="store">
+                <span>円</span>
+              </span>
+            </label>
+            <label class="wage-base">
+              <span data-text="salesRemote"></span>
+              <span class="yen-input">
+                <input type="number" inputmode="numeric" min="0" step="100" id="sales-remote" data-sales="remote">
+                <span>円</span>
+              </span>
+            </label>
+            <div class="stats sales__stats" id="sales-day-stats"></div>
+          </div>
+          <div class="card">
+            <h2 id="sales-month-title"></h2>
+            <label class="wage-base">
+              <span data-text="salesTarget"></span>
+              <span class="yen-input">
+                <input type="number" inputmode="numeric" min="0" step="10000" id="sales-target">
+                <span>円</span>
+              </span>
+            </label>
+            <div class="stats sales__stats" id="sales-month-stats"></div>
+          </div>
+        </div>
+        <div class="card" id="sales-month-days"></div>
+      </div>
+    </section>
+
     <!-- 집계・명세: 기간을 골라 캐스트별 합계와 영수증 모양 명세 -->
     <section class="view" id="view-summary" role="tabpanel" hidden>
       <div class="pager period">

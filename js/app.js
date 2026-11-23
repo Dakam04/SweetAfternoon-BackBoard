@@ -3,7 +3,7 @@
 const CONFIG = window.BACK_CONFIG;
 const TEXTS = window.BACK_TEXTS;
 const EXPORT_FORMAT = 'sweet-afternoon-back';
-const VIEWS = ['entry', 'summary', 'settings'];
+const VIEWS = ['entry', 'sales', 'summary', 'settings'];
 
 const state = {
   view: 'entry',
@@ -26,7 +26,9 @@ const state = {
   //   rate, nightRate: 그날 그 사람의 시급·심야 시급. 처음엔 설정 값이고, 입력 화면에서 그날만 바꿀 수 있다.
   //   nightStart〜nightEnd, unit(계산 단위 분)도 입력한 때의 값 (나중에 설정을 바꿔도 지난 기록은 그대로)
   // wage: { base, nightRate }  시급 설정. cast.rate / cast.nightRate 가 있으면 그쪽을 쓴다.
-  data: { casts: [], items: [], days: {}, rosters: {}, works: {}, wage: { base: 0, nightRate: 0 } },
+  // sales: { 'YYYY-MM-DD': { guests, store, remote } }  그날의 손님 수와 매상(가게・원격, 円)
+  // targets: { 'YYYY-MM': amount }  그달의 목표 매상(円)
+  data: { casts: [], items: [], days: {}, rosters: {}, works: {}, wage: { base: 0, nightRate: 0 }, sales: {}, targets: {} },
   // 출근·퇴근 중 하나만 넣었거나 시각을 잘못 넣은 상태 (입력한 글자 그대로 둔다)
   workDraft: null,
 };
@@ -218,6 +220,38 @@ function normalizeDays(value) {
   return days;
 }
 
+const SALES_FIELDS = ['guests', 'store', 'remote'];
+
+function normalizeSales(value) {
+  const sales = {};
+  if (!value || typeof value !== 'object') {
+    return sales;
+  }
+  for (const [key, raw] of Object.entries(value)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key) || !raw || typeof raw !== 'object') {
+      continue;
+    }
+    const day = Object.fromEntries(SALES_FIELDS.map((field) => [field, toAmount(raw[field])]));
+    if (SALES_FIELDS.some((field) => day[field])) {
+      sales[key] = day;
+    }
+  }
+  return sales;
+}
+
+function normalizeTargets(value) {
+  const targets = {};
+  if (!value || typeof value !== 'object') {
+    return targets;
+  }
+  for (const [month, amount] of Object.entries(value)) {
+    if (/^\d{4}-\d{2}$/.test(month) && toAmount(amount)) {
+      targets[month] = toAmount(amount);
+    }
+  }
+  return targets;
+}
+
 function normalizeData(raw) {
   const list = (value, normalize) => (Array.isArray(value) ? value.map(normalize).filter(Boolean) : []);
   return {
@@ -226,6 +260,8 @@ function normalizeData(raw) {
     days: normalizeDays(raw?.days),
     rosters: normalizeRosters(raw?.rosters),
     works: normalizeWorks(raw?.works),
+    sales: normalizeSales(raw?.sales),
+    targets: normalizeTargets(raw?.targets),
     // 시급 설정이 없는 데이터(예전 데이터)는 null. 불러올 때 처음 설정으로 채운다.
     wage: raw?.wage && typeof raw.wage === 'object' ? normalizeWage(raw.wage) : null,
   };
@@ -829,7 +865,7 @@ function selectView(view) {
 }
 
 function render() {
-  ({ entry: renderEntry, summary: renderSummary, settings: renderSettings })[state.view]();
+  ({ entry: renderEntry, sales: renderSales, summary: renderSummary, settings: renderSettings })[state.view]();
 }
 
 // ---------- 입력 ----------
@@ -1039,8 +1075,145 @@ function clearCastDay() {
 function moveDate(key) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(key)) {
     state.date = key;
-    renderEntry();
+    render();
   }
+}
+
+// ---------- 매상 ----------
+
+function salesOf(key) {
+  return state.data.sales[key] || { guests: 0, store: 0, remote: 0 };
+}
+
+function salesTotal(day) {
+  return day.store + day.remote;
+}
+
+// 객단가 = 매상 합계 ÷ 손님 수 (원 미만 버림). 손님 수가 없으면 null
+function perGuest(total, guests) {
+  return guests ? Math.floor(total / guests) : null;
+}
+
+function monthKey(key) {
+  return key.slice(0, 7);
+}
+
+// 그달의 날짜별 매상 (날짜 순)
+function monthSales(month) {
+  return Object.keys(state.data.sales)
+    .filter((key) => monthKey(key) === month)
+    .sort()
+    .map((key) => ({ key, ...state.data.sales[key] }));
+}
+
+function statHtml(label, value, note = '') {
+  return `<div class="stat"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong>${note ? `<small>${escapeHtml(note)}</small>` : ''}</div>`;
+}
+
+function renderSales() {
+  const key = state.date;
+  document.getElementById('sales-date-label').textContent = dateLabel(key);
+  document.getElementById('sales-date').value = key;
+  document.getElementById('sales-day-title').textContent = TEXTS.salesDayTitle(dateLabel(key));
+  const [year, month] = key.split('-').map(Number);
+  document.getElementById('sales-month-title').textContent = TEXTS.salesMonthTitle(year, month);
+  const day = salesOf(key);
+  for (const field of SALES_FIELDS) {
+    document.getElementById(`sales-${field}`).value = day[field] || '';
+  }
+  document.getElementById('sales-target').value = state.data.targets[monthKey(key)] || '';
+  renderSalesStats();
+}
+
+// 계산 결과(합계·객단가·남은 금액·달성률)와 날짜별 표만 다시 그린다. 입력칸은 건드리지 않는다.
+function renderSalesStats() {
+  const key = state.date;
+  const day = salesOf(key);
+  const total = salesTotal(day);
+  const unit = perGuest(total, day.guests);
+  document.getElementById('sales-day-stats').innerHTML = [
+    statHtml(TEXTS.salesTotal, TEXTS.yen(total)),
+    statHtml(TEXTS.salesPerGuest, unit === null ? '—' : TEXTS.yen(unit), TEXTS.salesPerGuestNote),
+  ].join('');
+
+  const month = monthKey(key);
+  const days = monthSales(month);
+  const sum = (field) => days.reduce((acc, row) => acc + row[field], 0);
+  const monthTotal = sum('store') + sum('remote');
+  const guests = sum('guests');
+  const target = state.data.targets[month] || 0;
+  const monthUnit = perGuest(monthTotal, guests);
+  const remaining = target - monthTotal;
+  document.getElementById('sales-month-stats').innerHTML = [
+    statHtml(TEXTS.salesMonthTotal, TEXTS.yen(monthTotal)),
+    target
+      ? statHtml(remaining >= 0 ? TEXTS.salesRemaining : TEXTS.salesOver, TEXTS.yen(Math.abs(remaining)))
+      : statHtml(TEXTS.salesRemaining, '—', TEXTS.salesNoTarget),
+    target
+      ? statHtml(TEXTS.salesRate, TEXTS.percent((monthTotal / target) * 100))
+      : statHtml(TEXTS.salesRate, '—', TEXTS.salesNoTarget),
+    statHtml(TEXTS.salesMonthGuests, TEXTS.people(guests)),
+    statHtml(TEXTS.salesMonthPerGuest, monthUnit === null ? '—' : TEXTS.yen(monthUnit)),
+  ].join('');
+
+  const rows = days.map((row) => {
+    const rowTotal = salesTotal(row);
+    const rowUnit = perGuest(rowTotal, row.guests);
+    return `<tr${row.key === key ? ' class="is-current"' : ''}>
+      <th scope="row"><button type="button" class="link-button" data-action="sales-day" data-date="${row.key}">${escapeHtml(shortDate(row.key))}</button></th>
+      <td>${row.guests ? escapeHtml(TEXTS.people(row.guests)) : ''}</td>
+      <td>${escapeHtml(TEXTS.yen(row.store))}</td>
+      <td>${escapeHtml(TEXTS.yen(row.remote))}</td>
+      <td>${escapeHtml(TEXTS.yen(rowTotal))}</td>
+      <td>${rowUnit === null ? '' : escapeHtml(TEXTS.yen(rowUnit))}</td>
+    </tr>`;
+  });
+  document.getElementById('sales-month-days').innerHTML = `<h2>${escapeHtml(TEXTS.salesDaysTitle(Number(month.slice(5))))}</h2>` + (rows.length === 0
+    ? `<p class="empty">${escapeHtml(TEXTS.salesDaysEmpty)}</p>`
+    : `<div class="table-scroll"><table class="table">
+        <thead><tr>
+          <th scope="col">${escapeHtml(TEXTS.colDate)}</th>
+          <th scope="col">${escapeHtml(TEXTS.colGuests)}</th>
+          <th scope="col">${escapeHtml(TEXTS.colStore)}</th>
+          <th scope="col">${escapeHtml(TEXTS.colRemote)}</th>
+          <th scope="col">${escapeHtml(TEXTS.colTotal)}</th>
+          <th scope="col">${escapeHtml(TEXTS.colPerGuest)}</th>
+        </tr></thead>
+        <tbody>${rows.join('')}</tbody>
+        <tfoot><tr>
+          <th scope="row">${escapeHtml(TEXTS.totalRow)}</th>
+          <td>${escapeHtml(TEXTS.people(guests))}</td>
+          <td>${escapeHtml(TEXTS.yen(sum('store')))}</td>
+          <td>${escapeHtml(TEXTS.yen(sum('remote')))}</td>
+          <td>${escapeHtml(TEXTS.yen(monthTotal))}</td>
+          <td>${monthUnit === null ? '' : escapeHtml(TEXTS.yen(monthUnit))}</td>
+        </tr></tfoot>
+      </table></div>`);
+}
+
+// 칠 때마다 저장하고 계산 결과만 다시 그린다 (입력칸 포커스가 빠지지 않도록).
+function handleSalesInput(event) {
+  const input = event.target;
+  if (input.id === 'sales-target') {
+    const amount = toAmount(input.value);
+    const month = monthKey(state.date);
+    if (amount) {
+      state.data.targets[month] = amount;
+    } else {
+      delete state.data.targets[month];
+    }
+  } else if (input.dataset.sales) {
+    const day = { ...salesOf(state.date), [input.dataset.sales]: toAmount(input.value) };
+    if (SALES_FIELDS.some((field) => day[field])) {
+      state.data.sales[state.date] = day;
+    } else {
+      delete state.data.sales[state.date];
+    }
+  } else {
+    return;
+  }
+  saveData();
+  renderSalesStats();
 }
 
 // ---------- 집계・명세 ----------
@@ -1624,7 +1797,7 @@ async function importData(file) {
     setStatus(TEXTS.importInvalid, true);
     return;
   }
-  const dayCount = new Set([...Object.keys(imported.days), ...Object.keys(imported.works)]).size;
+  const dayCount = new Set([...Object.keys(imported.days), ...Object.keys(imported.works), ...Object.keys(imported.sales)]).size;
   if (dayCount === 0 && imported.casts.length === 0 && imported.items.length === 0) {
     setStatus(TEXTS.importEmpty, true);
     return;
@@ -1637,6 +1810,8 @@ async function importData(file) {
   Object.assign(state.data.days, imported.days);
   Object.assign(state.data.rosters, imported.rosters);
   Object.assign(state.data.works, imported.works);
+  Object.assign(state.data.sales, imported.sales);
+  Object.assign(state.data.targets, imported.targets);
   if (imported.wage) {
     state.data.wage = imported.wage;
   }
@@ -1677,6 +1852,7 @@ function handleAction(button) {
     'clear-cast-day': clearCastDay,
     'refresh-rate': refreshWorkRate,
     'remove-from-day': removeFromDay,
+    'sales-day': () => moveDate(button.dataset.date),
     'day-add': () => addToDay(document.getElementById('day-add-name').value),
     'this-month': () => setPeriod(...monthRange(0)),
     'last-month': () => setPeriod(...monthRange(-1)),
@@ -1746,6 +1922,9 @@ function init() {
       changeWorkTime();
     }
   });
+
+  document.getElementById('sales-date').addEventListener('change', (event) => moveDate(event.target.value));
+  document.getElementById('view-sales').addEventListener('input', handleSalesInput);
 
   document.getElementById('period-from').addEventListener('change', (event) => setPeriod(event.target.value, state.to));
   document.getElementById('period-to').addEventListener('change', (event) => setPeriod(state.from, event.target.value));

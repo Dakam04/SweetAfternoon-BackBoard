@@ -9,7 +9,7 @@ window.BACK_TEXTS = {
 
   // ---------- 탭 ----------
   viewTabsLabel: '画面の切り替え',
-  viewTabs: { entry: '入力', summary: '集計・明細', settings: '設定' },
+  viewTabs: { entry: '入力', sales: '売上', summary: '集計・明細', settings: '設定' },
 
   // ---------- 날짜 ----------
   prevDay: '前の日',
@@ -70,6 +70,34 @@ window.BACK_TEXTS = {
   colWage: '時給',
   colTotal: '合計',
   colHours: '時間',
+
+  // ---------- 매상 ----------
+  salesDayTitle: (date) => `${date}の売上`,
+  salesGuests: '客人数',
+  peopleUnit: '人',
+  people: (count) => `${count.toLocaleString('ja-JP')}人`,
+  salesStore: '売上（お店）',
+  salesRemote: '売上（遠隔）',
+  salesTotal: '売上合計',
+  salesPerGuest: '客単価',
+  salesPerGuestNote: '売上合計 ÷ 客人数',
+  salesMonthTitle: (year, month) => `${year}年${month}月の目標`,
+  salesTarget: '月の目標売上',
+  salesMonthTotal: '今月の売上',
+  salesRemaining: '残り',
+  salesOver: '目標を超えた分',
+  salesRate: '達成率',
+  percent: (value) => `${value.toFixed(1)}%`,
+  salesNoTarget: '目標を入れると表示',
+  salesMonthGuests: '今月の客人数',
+  salesMonthPerGuest: '今月の客単価',
+  salesDaysTitle: (month) => `${month}月の日別`,
+  salesDaysEmpty: 'この月の売上はまだありません。',
+  colDate: '日付',
+  colGuests: '客人数',
+  colStore: 'お店',
+  colRemote: '遠隔',
+  colPerGuest: '客単価',
 
   // ---------- 집계・명세 ----------
   periodLabel: '期間',
